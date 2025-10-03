@@ -1,0 +1,3 @@
+# Ignore executables and wheels
+*.exe
+*.whl
