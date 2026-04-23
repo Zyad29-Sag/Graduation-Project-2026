@@ -1,0 +1,27 @@
+# Core
+opencv-python==4.9.0.80
+numpy==1.26.4
+Pillow==10.3.0
+
+# Detection
+ultralytics==8.2.0
+
+# Tracking
+deep-sort-realtime==1.3.2
+
+# Embedding  (Phase 2)
+insightface==0.7.3
+onnxruntime==1.18.0
+
+# Storage  (Phase 2)
+SQLAlchemy==2.0.30
+
+# LLM  (Phase 4)
+ollama==0.2.1
+
+# Search  (Phase 3)
+scikit-learn==1.5.0
+
+# Utils
+python-dotenv==1.0.1
+tqdm==4.66.4

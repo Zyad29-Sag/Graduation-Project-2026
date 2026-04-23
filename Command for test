@@ -1,0 +1,25 @@
+#phase 1
+
+python main.py --phase 1 --videos data/videos/video1_1.avi data/videos/video1_2.avi data/videos/video1_3.avi data/videos/video1_4.avi data/videos/video1_5.avi
+
+
+#phase 2
+
+python main.py --phase 2 --videos data/videos/video1_1.avi data/videos/video1_2.avi data/videos/video1_3.avi data/videos/video1_4.avi data/videos/video1_5.avi
+
+
+#phase 3
+# Query mode: Search the database using an existing snapshot
+python main.py --phase 3 --query "data/snapshots/179f1cd4-8b05-4b45-aa42-ec5b037bb4ed/crop_0.jpg"
+
+
+
+
+
+
+
+
+
+
+
+

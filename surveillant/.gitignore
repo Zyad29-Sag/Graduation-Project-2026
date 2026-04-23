@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+data/snapshots/*
+!data/snapshots/.gitkeep
+database/surveillant.db
+*.mp4
+*.avi
+*.mov
+.DS_Store
