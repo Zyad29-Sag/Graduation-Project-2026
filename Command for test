@@ -1,25 +1,14 @@
-#phase 1
-
+# phase 1
 python main.py --phase 1 --videos data/videos/video1_1.avi data/videos/video1_2.avi data/videos/video1_3.avi data/videos/video1_4.avi data/videos/video1_5.avi
 
-
-#phase 2
-
+# phase 2
 python main.py --phase 2 --videos data/videos/video1_1.avi data/videos/video1_2.avi data/videos/video1_3.avi data/videos/video1_4.avi data/videos/video1_5.avi
 
-
-#phase 3
+# phase 3
 # Query mode: Search the database using an existing snapshot
-python main.py --phase 3 --query "data/snapshots/179f1cd4-8b05-4b45-aa42-ec5b037bb4ed/crop_0.jpg"
+python main.py --phase 3 --query "data/snapshots/ed2465db-d6d3-4733-a3e3-49471d52e0f5/crop_0.jpg"
 
-
-
-
-
-
-
-
-
-
-
-
+# Debug Dashboard (run in a SEPARATE terminal while Phase 2 is running)
+# cd surveillant
+python debug_dashboard.py
+# Then open: http://localhost:8501

@@ -60,8 +60,13 @@ class GalleryManager:
         if len(existing_gallery) >= MAX_GALLERY_SIZE:
             return False
 
-        existing_vecs  = [e["embedding"] for e in existing_gallery]
-        existing_types = [e["type"]      for e in existing_gallery]
+        existing_vecs  = [e["embedding"] for e in existing_gallery
+                          if e["embedding"].shape[0] == new_embedding.shape[0]]
+        existing_types = [e["type"] for e in existing_gallery
+                          if e["embedding"].shape[0] == new_embedding.shape[0]]
+
+        if not existing_vecs:
+            return True   # all stored embeddings are from a different backbone — treat as empty
 
         face_count = sum(1 for t in existing_types if t == "face")
 
@@ -116,7 +121,11 @@ class GalleryManager:
                 and source_cam != person_first_cam):
             return "cross_cam_view"
 
-        existing_vecs = [e["embedding"] for e in existing_gallery]
+        existing_vecs = [e["embedding"] for e in existing_gallery
+                         if e["embedding"].shape[0] == new_embedding.shape[0]]
+        if not existing_vecs:
+            return "initial"
+
         query_2d      = new_embedding.reshape(1, -1)
         gallery_array = np.array(existing_vecs)
         similarities  = cosine_similarity(query_2d, gallery_array)[0]
@@ -166,15 +175,19 @@ class GalleryManager:
 
         if not self.should_add_to_gallery(new_emb, new_type, existing):
             if existing:
-                existing_vecs = [e["embedding"] for e in existing]
-                query_2d      = new_emb.reshape(1, -1)
-                sims          = cosine_similarity(query_2d, np.array(existing_vecs))[0]
-                max_sim       = float(np.max(sims))
-                dist          = 1.0 - max_sim
-                print(
-                    f"[GALLERY] person {person_id[:8]} | {new_type} view REJECTED "
-                    f"dist={dist:.2f} (too similar)"
-                )
+                compat = [e["embedding"] for e in existing
+                          if e["embedding"].shape[0] == new_emb.shape[0]]
+                if compat:
+                    query_2d = new_emb.reshape(1, -1)
+                    sims     = cosine_similarity(query_2d, np.array(compat))[0]
+                    dist     = 1.0 - float(np.max(sims))
+                    if dist > GALLERY_MAX_DISTANCE:
+                        reason = f"too dissimilar/bad crop (dist={dist:.2f} > {GALLERY_MAX_DISTANCE})"
+                    elif len(existing) >= MAX_GALLERY_SIZE:
+                        reason = "gallery full"
+                    else:
+                        reason = f"duplicate angle (dist={dist:.2f} < {BODY_GALLERY_ADD_DISTANCE})"
+                    print(f"[GALLERY] person {person_id[:8]} | {new_type} REJECTED — {reason}")
             return False
 
         # Determine angle tag

@@ -64,8 +64,9 @@ class PersonDetector:
             source=frame,
             conf=self.conf,
             classes=[self.PERSON_CLASS_ID],
-            imgsz=self.imgsz,   # smaller input = much faster CPU inference
-            verbose=False,       # suppress per-frame console spam
+            imgsz=self.imgsz,
+            iou=0.40,    # aggressive NMS — prevents split detections (torso + full body) reaching the tracker
+            verbose=False,
         )
 
         detections: List[Dict[str, Any]] = []
@@ -73,11 +74,15 @@ class PersonDetector:
         for result in results:
             for box in result.boxes:
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
-                confidence      = float(box.conf[0])
+                w = x2 - x1
+                h = y2 - y1
+                # Skip tiny boxes — likely false positives or body fragments
+                if w < 20 or h < 40:
+                    continue
                 detections.append(
                     {
                         "bbox":       [int(x1), int(y1), int(x2), int(y2)],
-                        "confidence": confidence,
+                        "confidence": float(box.conf[0]),
                     }
                 )
 

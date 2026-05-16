@@ -1,9 +1,12 @@
 """
 modules/embedding/embedder.py
 ------------------------------
-Extracts high-dimensional feature vectors from cropped person images using a
-lightweight Vision CNN (MobileNetV3 on PyTorch), avoiding the C++ compilation
-issues found in InsightFace on Windows.
+Extracts high-dimensional feature vectors from cropped person images using
+ResNet-50 (PyTorch). ResNet-50 provides 2048-d features that discriminate
+appearance far better than MobileNetV3-small for Re-ID tasks.
+
+NOTE: Switching backbones invalidates previously stored embeddings.
+      Clear the database (surveillant.db) when changing this model.
 """
 
 import numpy as np
@@ -12,39 +15,40 @@ import torch
 import torchvision.models as models
 import torchvision.transforms as T
 
+EMBEDDING_DIM = 2048  # ResNet-50 pooled feature size
+
 
 class PersonEmbedder:
     """
-    Extracts appearance features (embeddings) using a pretrained CNN.
-    Due to InsightFace OS incompatibilities, we use MobileNetV3 (Body features).
+    Extracts appearance features (embeddings) using ResNet-50.
+    The classification head is removed; only the 2048-d pooled feature vector
+    is used so that cosine similarity measures appearance, not ImageNet class.
     """
 
     def __init__(self) -> None:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"[PersonEmbedder] Initializing MobileNetV3 on {self.device}...")
-        
-        # Load pre-trained model and keep only the feature extractor and pooler,
-        # dropping the 1000-class ImageNet classification head.
+        print(f"[PersonEmbedder] Initializing ResNet-50 on {self.device}...")
+
         try:
-            model = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
+            backbone = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
         except AttributeError:
-            model = models.mobilenet_v3_small(pretrained=True)
-            
+            backbone = models.resnet50(pretrained=True)
+
+        # Strip the final FC classification layer; keep conv + avgpool → 2048-d
         self.model = torch.nn.Sequential(
-            model.features,
-            model.avgpool,
-            torch.nn.Flatten()  # Output shape: (1, 576)
+            *list(backbone.children())[:-1],  # up to and including avgpool
+            torch.nn.Flatten(),               # (batch, 2048, 1, 1) → (batch, 2048)
         )
         self.model.to(self.device).eval()
-        
-        # Standard ImageNet pre-processing
+
+        # Standard ImageNet pre-processing (ResNet expects 224×224)
         self.transform = T.Compose([
             T.ToPILImage(),
-            T.Resize((112, 112)),
+            T.Resize((224, 224)),
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
-        print("[PersonEmbedder] Embedder ready (Body / MobileNetV3).")
+        print("[PersonEmbedder] Embedder ready (Body / ResNet-50, dim=2048).")
 
     # ------------------------------------------------------------------
     # Public API
@@ -59,17 +63,16 @@ class PersonEmbedder:
 
     def extract_body_embedding(self, crop: np.ndarray) -> np.ndarray:
         """
-        Extract a 576-dimensional normalized body feature vector.
-        
+        Extract a 2048-dimensional normalized body feature vector.
+
         Args:
             crop (np.ndarray): BGR image patch.
-            
+
         Returns:
             np.ndarray: 1D normalized feature vector (float32).
         """
         if crop.size == 0:
-            # Fallback if an empty crop is somehow passed
-            return np.zeros(576, dtype=np.float32)
+            return np.zeros(EMBEDDING_DIM, dtype=np.float32)
 
         crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
         tensor = self.transform(crop_rgb).unsqueeze(0).to(self.device)

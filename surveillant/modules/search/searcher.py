@@ -78,6 +78,9 @@ class PersonSearcher:
                 stored_vec  = entry["embedding"]
                 stored_type = entry["type"]
 
+                if stored_vec.shape[0] != query_embedding.shape[0]:
+                    continue  # stale embedding from a different backbone — skip
+
                 sim = float(
                     cosine_similarity(query_2d, stored_vec.reshape(1, -1))[0][0]
                 )

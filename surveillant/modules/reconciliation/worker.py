@@ -37,7 +37,7 @@ class ReconciliationWorker:
     def __init__(self) -> None:
         self._stop_event = threading.Event()
 
-    def run_forever(self, db, track_registry: dict, color_registry=None) -> None:
+    def run_forever(self, db, track_registry: dict, color_registry=None, registry_lock=None) -> None:
         """
         Main loop. Runs run_cycle() every RECONCILIATION_INTERVAL_SEC seconds.
         Designed to run as a daemon thread.
@@ -45,7 +45,7 @@ class ReconciliationWorker:
         while not self._stop_event.is_set():
             time.sleep(RECONCILIATION_INTERVAL_SEC)
             try:
-                summary = self.run_cycle(db, track_registry, color_registry)
+                summary = self.run_cycle(db, track_registry, color_registry, registry_lock)
                 self._print_summary(summary)
             except Exception as exc:
                 import traceback
@@ -63,6 +63,7 @@ class ReconciliationWorker:
         db,
         track_registry: dict,
         color_registry=None,
+        registry_lock=None,
     ) -> Dict[str, Any]:
         """
         Runs one full reconciliation cycle. Returns a summary dict.
@@ -112,16 +113,22 @@ class ReconciliationWorker:
 
                 moved = db.merge_persons(keep_id, remove_id)
 
-                # Update color_registry aliases
+                # Update color_registry aliases (snapshot then apply)
                 if color_registry is not None:
                     for key, pid in list(color_registry._aliases.items()):
                         if pid == remove_id:
                             color_registry._aliases[key] = keep_id
 
-                # Update track_registry
-                for k, pid in list(track_registry.items()):
-                    if pid == remove_id:
-                        track_registry[k] = keep_id
+                # Update track_registry under lock to prevent detection-thread races
+                if registry_lock:
+                    with registry_lock:
+                        for k, pid in list(track_registry.items()):
+                            if pid == remove_id:
+                                track_registry[k] = keep_id
+                else:
+                    for k, pid in list(track_registry.items()):
+                        if pid == remove_id:
+                            track_registry[k] = keep_id
 
                 auto_merges += 1
                 print(
@@ -146,8 +153,12 @@ class ReconciliationWorker:
             if status == "ghost" or not last_seen:
                 continue
 
-            # Check if person is still in track_registry
-            still_active = any(v == pid for v in track_registry.values())
+            # Check if person is still in track_registry (hold lock for thread-safe read)
+            if registry_lock:
+                with registry_lock:
+                    still_active = any(v == pid for v in track_registry.values())
+            else:
+                still_active = any(v == pid for v in track_registry.values())
             if still_active:
                 continue
 
@@ -201,8 +212,10 @@ class ReconciliationWorker:
         for entry_a in gallery_a:
             vec_a = entry_a["embedding"].reshape(1, -1)
             for entry_b in gallery_b:
-                vec_b = entry_b["embedding"].reshape(1, -1)
-                sim = float(cosine_similarity(vec_a, vec_b)[0][0])
+                vec_b = entry_b["embedding"]
+                if vec_b.shape[0] != entry_a["embedding"].shape[0]:
+                    continue  # incompatible backbone — skip
+                sim = float(cosine_similarity(vec_a, vec_b.reshape(1, -1))[0][0])
                 if sim > best:
                     best = sim
         return best

@@ -287,19 +287,15 @@ class Database:
         Also updates denormalized gallery_size and known_angles on the person row,
         and automatically promotes the person status when gallery grows.
         """
-        now_ts = captured_at
+        # Everything in ONE transaction to avoid nested-connection deadlocks on WAL.
         with self._get_conn() as conn:
             conn.execute(
                 """INSERT INTO person_embeddings
                    (person_id, embedding, embedding_type, angle_tag, source_cam, captured_at)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (person_id, embedding_bytes, embedding_type, angle_tag, source_cam, now_ts),
+                (person_id, embedding_bytes, embedding_type, angle_tag, source_cam, captured_at),
             )
-            if self._in_memory:
-                conn.commit()
 
-        # Update denormalized count + known_angles + last_gallery_update
-        with self._get_conn() as conn:
             cursor = conn.execute(
                 "SELECT gallery_size, known_angles FROM persons WHERE person_id=?",
                 (person_id,),
@@ -314,13 +310,17 @@ class Database:
                     """UPDATE persons
                        SET gallery_size=?, known_angles=?, last_gallery_update=?
                        WHERE person_id=?""",
-                    (new_size, json.dumps(angles_list), now_ts, person_id),
+                    (new_size, json.dumps(angles_list), captured_at, person_id),
                 )
-                if self._in_memory:
-                    conn.commit()
-                # Auto-promote status
+                # Inline status promotion — avoids opening a second connection inside this one
                 if new_size == 2:
-                    self.update_person_status(person_id, "confirmed")
+                    conn.execute(
+                        "UPDATE persons SET status='confirmed' WHERE person_id=?",
+                        (person_id,),
+                    )
+
+            if self._in_memory:
+                conn.commit()
 
     def get_gallery(self, person_id: str) -> List[np.ndarray]:
         """Return all gallery embeddings as numpy arrays (vectors only)."""

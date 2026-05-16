@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional
 
 from deep_sort_realtime.deepsort_tracker import DeepSort
 
-from config.settings import MAX_AGE, IOU_THRESHOLD
+from config.settings import MAX_AGE, MIN_HITS, IOU_THRESHOLD
 
 
 class PersonTracker:
@@ -31,8 +31,8 @@ class PersonTracker:
         self._tracker = DeepSort(
             max_age          = MAX_AGE,
             max_iou_distance = 1.0 - IOU_THRESHOLD,
-            n_init           = 2,          # 2 frames to confirm (was 3 = too slow)
-            embedder         = None,       # Disabled slow builtin CNN (was "mobilenet")
+            n_init           = MIN_HITS,
+            embedder         = None,       # Disabled — SURVEILLANT manages Re-ID externally
             half             = False,
             bgr              = True,
         )
@@ -78,6 +78,11 @@ class PersonTracker:
         for track in tracks:
             if not track.is_confirmed():
                 continue
+            # Skip pure Kalman predictions — only draw tracks that were matched
+            # to an actual detection this cycle (time_since_update == 0).
+            # Stale predictions cause "ghost boxes" trailing behind moving persons.
+            if track.time_since_update > 1:
+                continue
             ltrb = track.to_ltrb()
             confirmed.append(
                 {
@@ -87,7 +92,50 @@ class PersonTracker:
                 }
             )
 
-        return confirmed
+        return self._deduplicate(confirmed)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _deduplicate(
+        self,
+        tracks: List[Dict[str, Any]],
+        iou_threshold: float = 0.50,
+    ) -> List[Dict[str, Any]]:
+        """
+        Remove confirmed tracks whose bounding boxes heavily overlap.
+        Keeps the track with the lower (older) track_id.
+        Prevents split YOLO detections from showing as two boxes on screen.
+        """
+        if len(tracks) <= 1:
+            return tracks
+
+        sorted_tracks = sorted(tracks, key=lambda t: t["track_id"])
+        suppressed = set()
+
+        for i in range(len(sorted_tracks)):
+            if i in suppressed:
+                continue
+            for j in range(i + 1, len(sorted_tracks)):
+                if j in suppressed:
+                    continue
+                if self._iou(sorted_tracks[i]["bbox"], sorted_tracks[j]["bbox"]) > iou_threshold:
+                    suppressed.add(j)
+
+        return [t for idx, t in enumerate(sorted_tracks) if idx not in suppressed]
+
+    @staticmethod
+    def _iou(box_a: list, box_b: list) -> float:
+        ax1, ay1, ax2, ay2 = box_a
+        bx1, by1, bx2, by2 = box_b
+        ix1 = max(ax1, bx1)
+        iy1 = max(ay1, by1)
+        ix2 = min(ax2, bx2)
+        iy2 = min(ay2, by2)
+        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        union = (ax2-ax1)*(ay2-ay1) + (bx2-bx1)*(by2-by1) - inter
+        return inter / union if union > 0 else 0.0
 
     # ------------------------------------------------------------------
     # Public API — gallery hint feedback (Part B Improvement 4)
@@ -108,9 +156,8 @@ class PersonTracker:
         self._gallery_hints[track_id]   = gallery_embeddings
         self._track_to_person[track_id] = person_id
         print(
-            f"[REINFORCE] track cam{self.cam_id}_track{track_id} reinforced "
-            f"with {len(gallery_embeddings)}-view gallery for person {person_id[:8]}. "
-            f"DeepSORT appearance model updated. Track stability improved."
+            f"[REINFORCE] cam{self.cam_id}_track{track_id} -> person {person_id[:8]} "
+            f"({len(gallery_embeddings)}-view gallery stored)"
         )
 
     def get_appearance_hint(self, track_id: int) -> Optional[np.ndarray]:

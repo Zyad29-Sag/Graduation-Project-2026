@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SURVEILLANT Debug Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#08080e;--panel:#0f0f18;--card:#14141f;--border:#1c1c2e;
+  --acc:#7c3aed;--acc2:#06b6d4;--tx:#dde4f0;--mt:#566080;
+  --ok:#10b981;--wn:#f59e0b;--er:#ef4444;--bl:#3b82f6;
+}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--tx);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+/* ── Header ── */
+#hdr{background:linear-gradient(135deg,#0f0524 0%,#060d1f 100%);
+  border-bottom:1px solid var(--border);padding:10px 18px;flex-shrink:0}
+#htop{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+#htop h1{font-size:1.1rem;font-weight:700;
+  background:linear-gradient(90deg,#a78bfa,#38bdf8);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0;
+  animation:pu 1.6s ease-in-out infinite}
+@keyframes pu{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(1.5)}}
+#ri{margin-left:auto;font-size:.7rem;color:var(--mt)}
+#sbar{display:flex;flex-wrap:wrap;gap:5px}
+.sc{background:rgba(255,255,255,.04);border:1px solid var(--border);
+  border-radius:16px;padding:3px 11px;font-size:.74rem;display:flex;gap:5px;align-items:center}
+.sc b{color:var(--acc2);font-weight:600}
+/* ── Layout ── */
+#lay{display:grid;grid-template-columns:255px 1fr;flex:1;overflow:hidden;min-height:0}
+/* ── Activity Feed ── */
+#af{background:var(--panel);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden}
+#af h2{padding:9px 13px;font-size:.73rem;color:var(--mt);
+  text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);flex-shrink:0}
+#alist{flex:1;overflow-y:auto;padding:5px}
+.ai{padding:7px 9px;border-radius:6px;margin-bottom:4px;cursor:pointer;
+  font-size:.73rem;border-left:3px solid transparent;transition:background .12s}
+.ai:hover{background:rgba(255,255,255,.04)}
+.ai.NEW_PERSON{border-color:var(--ok)} .ai.STATUS_CHANGE{border-color:var(--bl)}
+.ai.GALLERY_UPDATE{border-color:var(--wn)} .ai.MERGE{border-color:var(--acc)}
+.ai.GHOST_MARKED{border-color:var(--mt)} .ai.LAST_SEEN_UPDATE{border-color:var(--acc2)}
+.at{color:var(--mt);font-size:.66rem} .atp{font-weight:700;font-size:.69rem}
+.am{margin-top:2px;color:var(--tx)} .ap{color:var(--mt);font-family:'JetBrains Mono',monospace;font-size:.66rem}
+/* ── Main ── */
+#main{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+#tabs{display:flex;background:var(--panel);border-bottom:1px solid var(--border);padding:0 13px;flex-shrink:0}
+.tab{padding:10px 13px;font-size:.79rem;font-weight:500;cursor:pointer;
+  border-bottom:2px solid transparent;color:var(--mt);transition:all .12s}
+.tab.active{color:var(--tx);border-color:var(--acc)}.tab:hover:not(.active){color:var(--tx)}
+.tcon{display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0}
+.tcon.active{display:flex}
+/* ── Persons Controls ── */
+#pctl{display:flex;gap:7px;padding:9px 13px;background:var(--panel);
+  border-bottom:1px solid var(--border);flex-shrink:0}
+#pctl input,#pctl select{background:rgba(255,255,255,.05);border:1px solid var(--border);
+  border-radius:6px;padding:5px 9px;color:var(--tx);font-size:.78rem;outline:none;transition:border .15s}
+#pctl input:focus,#pctl select:focus{border-color:var(--acc)}
+#pctl input{flex:1}
+#pctl select option{background:var(--card)}
+/* ── Table ── */
+#ptw{flex:1;overflow:auto}
+table{width:100%;border-collapse:collapse;font-size:.76rem}
+thead{position:sticky;top:0;z-index:5}
+th{padding:8px 11px;text-align:left;color:var(--mt);font-weight:600;
+  font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;
+  background:#0a0a14;border-bottom:1px solid var(--border)}
+td{padding:7px 11px;border-bottom:1px solid rgba(255,255,255,.035);vertical-align:middle}
+tr{cursor:pointer;transition:background .1s}
+tr:hover td{background:rgba(124,58,237,.07)}
+tr.sel td{background:rgba(124,58,237,.13)}
+.th{width:36px;height:44px;object-fit:cover;border-radius:4px;display:block}
+.thp{width:36px;height:44px;border-radius:4px;background:var(--border);
+  display:flex;align-items:center;justify-content:center;color:var(--mt);
+  font-size:.55rem;text-align:center;line-height:1.2}
+.pid{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--acc2)}
+.sb{padding:2px 7px;border-radius:10px;font-size:.66rem;font-weight:600;white-space:nowrap}
+.s-unverified{background:rgba(100,116,139,.18);color:#94a3b8}
+.s-confirmed{background:rgba(16,185,129,.13);color:var(--ok)}
+.s-multi_view{background:rgba(59,130,246,.13);color:#60a5fa}
+.s-ghost{background:rgba(100,116,139,.09);color:#475569}
+.s-flagged{background:rgba(239,68,68,.13);color:#f87171}
+.gb{display:flex;align-items:center;gap:5px;font-size:.69rem}
+.bt{width:52px;height:4px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden}
+.bf{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .3s}
+.ach{background:rgba(6,182,212,.1);color:var(--acc2);padding:1px 5px;
+  border-radius:8px;font-size:.6rem;margin:1px;display:inline-block}
+/* ── Detail Panel ── */
+#dp{background:rgba(4,4,10,.95);border-top:2px solid var(--acc);
+  display:none;overflow-y:auto;max-height:340px;flex-shrink:0}
+#dp.open{display:block}
+#dpi{padding:13px 17px}
+#dph{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px}
+#dpc{margin-left:auto;cursor:pointer;color:var(--mt);font-size:1.2rem;
+  line-height:1;flex-shrink:0;transition:color .12s}
+#dpc:hover{color:var(--tx)}
+.ds{margin-bottom:11px}
+.ds h3{font-size:.7rem;font-weight:600;color:var(--mt);
+  text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px}
+#sgrid{display:flex;flex-wrap:wrap;gap:5px}
+#sgrid img{width:55px;height:67px;object-fit:cover;border-radius:4px;
+  cursor:pointer;transition:transform .15s;border:2px solid transparent}
+#sgrid img:hover{transform:scale(1.14);border-color:var(--acc)}
+#etbl{width:100%;border-collapse:collapse;font-size:.69rem}
+#etbl th,#etbl td{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,.04);text-align:left}
+#etbl th{color:var(--mt);background:rgba(0,0,0,.25);font-size:.67rem}
+.nok{color:var(--ok)}.nbd{color:var(--er)}
+.vp{font-family:'JetBrains Mono',monospace;font-size:.63rem;color:var(--mt)}
+#pcaw{height:155px;background:rgba(0,0,0,.35);border-radius:7px;
+  position:relative;margin-top:6px;overflow:hidden}
+#pca{width:100%;height:100%}
+#pcal{position:absolute;top:4px;right:7px;font-size:.62rem;color:var(--mt)}
+/* ── Merges ── */
+#merges-t{flex:1;overflow:auto;padding:13px}
+.mc{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+  padding:11px;margin-bottom:8px;display:grid;
+  grid-template-columns:1fr 70px 1fr 90px;gap:10px;align-items:center;transition:border .15s}
+.mc:hover{border-color:var(--acc)}
+.mp{text-align:center}
+.mp img{width:48px;height:58px;object-fit:cover;border-radius:5px;margin-bottom:3px}
+.mp .pid{font-size:.63rem}
+.ss{font-size:1.25rem;font-weight:700;text-align:center}
+.ssh{color:var(--ok)}.ssm{color:var(--wn)}.ssl{color:var(--er)}
+.ms{text-align:center}
+/* ── Registry ── */
+#reg-t{flex:1;overflow:auto;padding:13px}
+.rt{width:100%;border-collapse:collapse;font-size:.76rem}
+.rt th{padding:7px 11px;background:var(--panel);color:var(--mt);
+  font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;
+  border-bottom:1px solid var(--border);text-align:left}
+.rt td{padding:7px 11px;border-bottom:1px solid rgba(255,255,255,.035)}
+/* ── Lightbox ── */
+#lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);
+  z-index:999;align-items:center;justify-content:center}
+#lb.show{display:flex}
+#lb img{max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 0 60px rgba(124,58,237,.4)}
+#lbc{position:absolute;top:14px;right:20px;font-size:2rem;cursor:pointer;
+  color:#fff;line-height:1;opacity:.7;transition:opacity .15s}
+#lbc:hover{opacity:1}
+/* ── Toast ── */
+#toast{position:fixed;bottom:16px;right:16px;background:var(--card);
+  border:1px solid var(--acc);border-radius:7px;padding:8px 13px;
+  font-size:.76rem;opacity:0;transform:translateY(8px);
+  transition:all .22s;pointer-events:none;z-index:888}
+#toast.show{opacity:1;transform:translateY(0)}
+</style>
+</head>
+<body>
+<div id="hdr">
+  <div id="htop">
+    <div class="dot"></div>
+    <h1>SURVEILLANT Debug Dashboard</h1>
+    <span id="ri">Refreshing... | <span id="uts">0s</span> uptime</span>
+  </div>
+  <div id="sbar">
+    <div class="sc">Persons <b id="s-total">-</b></div>
+    <div class="sc">Unverified <b id="s-unv">-</b></div>
+    <div class="sc">Confirmed <b id="s-conf">-</b></div>
+    <div class="sc">Multi-view <b id="s-multi">-</b></div>
+    <div class="sc">Ghost <b id="s-ghost">-</b></div>
+    <div class="sc">Embeddings <b id="s-emb">-</b></div>
+    <div class="sc">Pending Merges <b id="s-pm">-</b></div>
+  </div>
+</div>
+<div id="lay">
+  <div id="af">
+    <h2>⚡ Live Activity</h2>
+    <div id="alist"></div>
+  </div>
+  <div id="main">
+    <div id="tabs">
+      <div class="tab active" onclick="showTab('persons',this)">Persons</div>
+      <div class="tab" onclick="showTab('merges',this)">Merge Proposals</div>
+      <div class="tab" onclick="showTab('registry',this)">Track Registry</div>
+    </div>
+    <div id="persons" class="tcon active">
+      <div id="pctl">
+        <input id="psearch" placeholder="Search person ID..." oninput="filterPersons()">
+        <select id="pstatus" onchange="filterPersons()">
+          <option value="">All Statuses</option>
+          <option>unverified</option><option>confirmed</option>
+          <option>multi_view</option><option>ghost</option><option>flagged</option>
+        </select>
+        <select id="pcam" onchange="filterPersons()"><option value="">All Cameras</option></select>
+      </div>
+      <div id="ptw">
+        <table>
+          <thead><tr>
+            <th>Img</th><th>Person ID</th><th>Status</th>
+            <th>First Seen</th><th>Last Seen</th>
+            <th>Gallery</th><th>Angles</th>
+          </tr></thead>
+          <tbody id="ptbl"></tbody>
+        </table>
+      </div>
+      <div id="dp">
+        <div id="dpi">
+          <div id="dph">
+            <div>
+              <div class="pid" id="d-pid"></div>
+              <div style="font-size:.78rem;color:var(--mt);margin-top:3px" id="d-meta"></div>
+            </div>
+            <span id="dpc" onclick="closeDetail()">✕</span>
+          </div>
+          <div class="ds"><h3>Snapshots</h3><div id="sgrid"></div></div>
+          <div class="ds"><h3>Embeddings</h3>
+            <table id="etbl">
+              <thead><tr><th>#</th><th>Type</th><th>Angle</th><th>Cam</th><th>Captured</th><th>Dims</th><th>Norm</th><th>Preview</th></tr></thead>
+              <tbody id="etbl-body"></tbody>
+            </table>
+            <div id="pcaw"><canvas id="pca"></canvas><div id="pcal">PCA 2D</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="merges" class="tcon">
+      <div id="merges-t"></div>
+    </div>
+    <div id="registry" class="tcon">
+      <div id="reg-t">
+        <table class="rt">
+          <thead><tr><th>Camera</th><th>Track ID</th><th>Person ID</th><th>Status</th></tr></thead>
+          <tbody id="reg-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="lb"><span id="lbc" onclick="closeLb()">✕</span><img id="lb-img" src=""></div>
+<div id="toast"></div>
+<script>
+let persons = [];
+let cameras = [];
+let selectedPersonId = null;
+let lastActivityUpdate = 120;
+let refreshInterval = null;
+
+// Safe time formatter — handles ISO ("2024-01-01T03:07:14") and plain ("03:07:14")
+function fmtTime(t) {
+  if (!t) return '—';
+  const parts = String(t).split('T');
+  const time = parts.length > 1 ? parts[1] : parts[0];
+  return time.substring(0, 8);
+}
+// Safe cam formatter
+function fmtCam(c) { return c != null ? 'cam' + c : '—'; }
+
+async function fetchStats() {
+  try {
+    const res = await fetch('/api/stats');
+    const data = await res.json();
+    document.getElementById('s-total').textContent = data.total_persons;
+    document.getElementById('s-unv').textContent = data.by_status.unverified || 0;
+    document.getElementById('s-conf').textContent = data.by_status.confirmed || 0;
+    document.getElementById('s-multi').textContent = data.by_status.multi_view || 0;
+    document.getElementById('s-ghost').textContent = data.by_status.ghost || 0;
+    document.getElementById('s-emb').textContent = data.total_embeddings;
+    document.getElementById('s-pm').textContent = data.pending_merges;
+    document.getElementById('uts').textContent = data.uptime_seconds + 's';
+  } catch (e) { console.error('Stats error:', e); }
+}
+
+async function fetchPersons() {
+  const status = document.getElementById('pstatus').value;
+  const cam = document.getElementById('pcam').value;
+  const search = document.getElementById('psearch').value;
+  let url = `/api/persons?limit=100`;
+  if (status) url += `&status=${status}`;
+  if (cam) url += `&cam=${cam}`;
+  if (search) url += `&search=${search}`;
+  
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    persons = data.persons;
+    renderPersons();
+  } catch (e) { console.error('Persons error:', e); }
+}
+
+function renderPersons() {
+  const tbody = document.getElementById('ptbl');
+  tbody.innerHTML = persons.map(p => `
+    <tr onclick="showDetail('${p.person_id}')" class="${selectedPersonId === p.person_id ? 'sel' : ''}">
+      <td>${p.snapshot_paths.length ? `<img src="/api/snapshot_by_path?path=${encodeURIComponent(p.snapshot_paths[0])}" class="th">` : '<div class="thp">NO<br>IMG</div>'}</td>
+      <td class="pid">${p.person_id.substring(0,8)}...</td>
+      <td><span class="sb s-${p.status}">${p.status}</span></td>
+      <td>${fmtCam(p.first_seen_cam)} <span class="at">${fmtTime(p.first_seen_time)}</span></td>
+      <td>${fmtCam(p.last_seen_cam)} <span class="at">${fmtTime(p.last_seen_time)}</span></td>
+      <td>
+        <div class="gb">
+          <div class="bt"><div class="bf" style="width:${(p.gallery_size/10)*100}%"></div></div>
+          ${p.gallery_size}
+        </div>
+      </td>
+      <td>${(p.known_angles || []).map(a => `<span class="ach">${a}</span>`).join('')}</td>
+    </tr>
+  `).join('');
+}
+
+async function fetchActivity() {
+  try {
+    const res = await fetch(`/api/activity_log?since_seconds=120`);
+    const data = await res.json();
+    const list = document.getElementById('alist');
+    const existing = Array.from(list.children).map(c => c.dataset.id);
+    
+    data.events.forEach(e => {
+      const id = `${e.type}-${e.person_id || e.merge_id}-${e.time}`;
+      if (!existing.includes(id)) {
+        const div = document.createElement('div');
+        div.className = `ai ${e.type}`;
+        div.dataset.id = id;
+        div.onclick = () => e.person_id && showDetail(e.person_id);
+        div.innerHTML = `
+          <div class="at">${fmtTime(e.time)} <span class="atp">${e.type}</span></div>
+          <div class="am">${e.message}</div>
+          ${e.person_id ? `<div class="ap">${e.person_id.substring(0,12)}...</div>` : ''}
+        `;
+        list.prepend(div);
+      }
+    });
+    // Keep only last 50
+    while (list.children.length > 50) list.lastChild.remove();
+  } catch (e) { console.error('Activity error:', e); }
+}
+
+async function fetchCameras() {
+  try {
+    const res = await fetch('/api/cameras');
+    const data = await res.json();
+    const sel = document.getElementById('pcam');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All Cameras</option>' + 
+      data.cameras.map(c => `<option value="${c}">Camera ${c}</option>`).join('');
+    sel.value = current;
+  } catch (e) { console.error('Cameras error:', e); }
+}
+
+async function showDetail(id) {
+  selectedPersonId = id;
+  renderPersons();
+  const dp = document.getElementById('dp');
+  dp.classList.add('open');
+  
+  try {
+    const [pRes, sRes, eRes, vRes] = await Promise.all([
+      fetch(`/api/persons/${id}`),
+      fetch(`/api/persons/${id}/snapshots`),
+      fetch(`/api/embeddings/${id}`),
+      fetch(`/api/embedding_vectors/${id}`)
+    ]);
+    const p = await pRes.json();
+    const s = await sRes.json();
+    const e = await eRes.json();
+    const v = await vRes.json();
+    
+    document.getElementById('d-pid').textContent = p.person_id;
+    document.getElementById('d-meta').textContent = `Created: ${(p.created_at||'').replace('T',' ')} | Gallery: ${p.gallery_size}/10`;
+    
+    const sgrid = document.getElementById('sgrid');
+    sgrid.innerHTML = s.snapshot_paths.map(path => 
+      `<img src="/api/snapshot_by_path?path=${encodeURIComponent(path)}" onclick="openLb(this.src)">`
+    ).join('');
+    
+    const etbl = document.getElementById('etbl-body');
+    etbl.innerHTML = e.embeddings.map(em => `
+      <tr>
+        <td>${em.id}</td>
+        <td>${em.embedding_type}</td>
+        <td><span class="ach">${em.angle_tag}</span></td>
+        <td>cam${em.source_cam}</td>
+        <td class="at">${em.captured_at.split('T')[1]}</td>
+        <td>${em.vector_dims}</td>
+        <td class="${em.vector_norm > 0.9 && em.vector_norm < 1.1 ? 'nok' : 'nbd'}">${em.vector_norm}</td>
+        <td class="vp">${em.vector_preview.map(n => n.toFixed(3)).join(', ')}...</td>
+      </tr>
+    `).join('');
+    
+    renderPCA(v.points);
+  } catch (err) { console.error('Detail error:', err); }
+}
+
+function renderPCA(points) {
+  const canvas = document.getElementById('pca');
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width = canvas.offsetWidth;
+  const h = canvas.height = canvas.offsetHeight;
+  ctx.clearRect(0, 0, w, h);
+  if (!points.length) return;
+  
+  const xs = points.map(p => p.x);
+  const ys = points.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const pad = 20;
+  
+  points.forEach(p => {
+    const x = pad + (p.x - minX) / (maxX - minX || 1) * (w - 2 * pad);
+    const y = h - (pad + (p.y - minY) / (maxY - minY || 1) * (h - 2 * pad));
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = p.type === 'face' ? '#06b6d4' : '#7c3aed';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.strokeWidth = 1;
+    ctx.stroke();
+  });
+}
+
+async function fetchMerges() {
+  try {
+    const res = await fetch('/api/merge_proposals');
+    const data = await res.json();
+    const wrap = document.getElementById('merges-t');
+    wrap.innerHTML = data.proposals.map(m => `
+      <div class="mc">
+        <div class="mp">
+          ${m.person_id_a_thumb ? `<img src="/api/snapshot_by_path?path=${encodeURIComponent(m.person_id_a_thumb)}">` : '<div class="thp">?</div>'}
+          <div class="pid">${m.person_id_a.substring(0,8)}</div>
+        </div>
+        <div class="ss ${m.similarity > 0.95 ? 'ssh' : m.similarity > 0.88 ? 'ssm' : 'ssl'}">${(m.similarity * 100).toFixed(1)}%</div>
+        <div class="mp">
+          ${m.person_id_b_thumb ? `<img src="/api/snapshot_by_path?path=${encodeURIComponent(m.person_id_b_thumb)}">` : '<div class="thp">?</div>'}
+          <div class="pid">${m.person_id_b.substring(0,8)}</div>
+        </div>
+        <div class="ms"><span class="sb s-${m.status}">${m.status}</span></div>
+      </div>
+    `).join('');
+  } catch (e) { console.error('Merges error:', e); }
+}
+
+async function fetchRegistry() {
+  try {
+    const res = await fetch('/api/track_registry');
+    const data = await res.json();
+    const body = document.getElementById('reg-body');
+    body.innerHTML = data.tracks.map(t => `
+      <tr>
+        <td>cam${t.cam_id}</td>
+        <td>${t.track_id}</td>
+        <td class="pid">${t.person_id}</td>
+        <td><span class="sb s-${t.person_status}">${t.person_status}</span></td>
+      </tr>
+    `).join('');
+  } catch (e) { console.error('Registry error:', e); }
+}
+
+function showTab(id, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tcon').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById(id).classList.add('active');
+  if (id === 'merges') fetchMerges();
+  if (id === 'registry') fetchRegistry();
+}
+
+function closeDetail() { document.getElementById('dp').classList.remove('open'); selectedPersonId = null; renderPersons(); }
+function openLb(src) { document.getElementById('lb-img').src = src; document.getElementById('lb').classList.add('show'); }
+function closeLb() { document.getElementById('lb').classList.remove('show'); }
+function filterPersons() { fetchPersons(); }
+
+function init() {
+  fetchStats(); fetchPersons(); fetchActivity(); fetchCameras();
+  setInterval(() => {
+    fetchStats();
+    fetchActivity();
+    if (document.getElementById('persons').classList.contains('active')) fetchPersons();
+    if (document.getElementById('merges').classList.contains('active')) fetchMerges();
+    if (document.getElementById('registry').classList.contains('active')) fetchRegistry();
+  }, 2000);
+}
+
+window.onload = init;
+</script>
+</body>
+</html>

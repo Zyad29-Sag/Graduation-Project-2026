@@ -201,19 +201,14 @@ def run_phase2(video_paths: list) -> None:
 
     # ── Track registry (RULE 1 store) ──────────────────────────────────────
     # (cam_id, track_id) → person_uuid   |   Permanent once written.
+    # IMPORTANT: Do NOT load from the previous session file.
+    # DeepSORT resets its track-ID counter every run, so old bindings would
+    # silently attach new-session tracks to wrong person_uuids (Bug 3 fix).
     track_registry: dict = {}
-
-    if TRACK_REGISTRY_PATH.exists():
-        try:
-            raw = json.loads(TRACK_REGISTRY_PATH.read_text())
-            for k, v in raw.items():
-                parts = k.split("_")
-                cam_i = int(parts[0].replace("cam", ""))
-                trk_i = int(parts[1].replace("track", ""))
-                track_registry[(cam_i, trk_i)] = v
-            print(f"[SURVEILLANT] Loaded {len(track_registry)} track entries from session file.")
-        except Exception:
-            pass
+    try:
+        TRACK_REGISTRY_PATH.write_text(json.dumps({}))   # clear stale file
+    except Exception:
+        pass
 
     registry_lock = threading.Lock()
 
@@ -267,7 +262,7 @@ def run_phase2(video_paths: list) -> None:
     recon_worker = ReconciliationWorker()
     recon_thread = threading.Thread(
         target=recon_worker.run_forever,
-        args=(db, track_registry, color_registry),
+        args=(db, track_registry, color_registry, registry_lock),
         daemon=True,
     )
     recon_thread.start()
@@ -294,6 +289,13 @@ def run_phase2(video_paths: list) -> None:
                 detections = shared_detector.detect(frame)
                 tracks     = trackers[cam_id].update(detections, frame)
                 now_ts     = time.time()
+
+                # Purge state for tracks that DeepSORT dropped this cycle (Bug 9 fix)
+                active_keys = {(cam_id, t["track_id"]) for t in tracks}
+                for k in list(frame_counter):
+                    if k[0] == cam_id and k not in active_keys:
+                        frame_counter.pop(k, None)
+                        crop_buffer.pop(k, None)
 
                 for t in tracks:
                     track_id = t["track_id"]
@@ -408,7 +410,7 @@ def run_phase2(video_paths: list) -> None:
                 now_ts = time.time()
                 if now_ts - last_db_write.get(person_uuid, 0.0) > 5.0:
                     last_db_write[person_uuid] = now_ts
-                    now_str = datetime.datetime.now().strftime("%H:%M:%S")
+                    now_str = datetime.datetime.now().isoformat()
                     db.update_last_seen(person_uuid, cam_id, now_str)
                     print(
                         f"[UPDATE]  person {person_uuid[:8]} | "
@@ -435,20 +437,42 @@ def run_phase2(video_paths: list) -> None:
                     )
 
                     if matches and matches[0]["similarity_score"] >= BODY_MATCH_THRESHOLD:
-                        # Existing person
-                        person_uuid = matches[0]["person_id"]
-                        status_out  = "returning"
-                        db.update_last_seen(person_uuid, cam_id, now_str)
-                        db.upsert_camera_history(person_uuid, cam_id, track_id, now_str)
-                        known_cams = db.get_cameras_for_person(person_uuid)
-                        if cam_id not in known_cams or len(known_cams) > 1:
-                            db.update_person_status(person_uuid, "multi_view")
-                        print(
-                            f"[MATCH]   cam{cam_id}_track{track_id} -> EXISTING person "
-                            f"{person_uuid[:8]} body_sim={matches[0]['similarity_score']:.2f}"
-                        )
-                    else:
-                        # Brand-new person
+                        candidate_uuid = matches[0]["person_id"]
+
+                        # ── Same-camera guard ──────────────────────────────
+                        # Two tracks active simultaneously on the same camera
+                        # cannot be the same physical person.  If the candidate
+                        # is already bound to a DIFFERENT track on this camera,
+                        # treat this as a new person instead of a false merge.
+                        with registry_lock:
+                            same_cam_conflict = any(
+                                pid == candidate_uuid
+                                and k[0] == cam_id
+                                and k[1] != track_id
+                                for k, pid in track_registry.items()
+                            )
+
+                        if same_cam_conflict:
+                            print(
+                                f"[GUARD]   cam{cam_id}_track{track_id} -> same-camera conflict "
+                                f"with {candidate_uuid[:8]} — creating NEW person"
+                            )
+                            matches = []   # fall through to new-person branch
+                        else:
+                            person_uuid = candidate_uuid
+                            status_out  = "returning"
+                            db.update_last_seen(person_uuid, cam_id, now_str)
+                            known_cams = db.get_cameras_for_person(person_uuid)
+                            db.upsert_camera_history(person_uuid, cam_id, track_id, now_str)
+                            if any(c != cam_id for c in known_cams):
+                                db.update_person_status(person_uuid, "multi_view")
+                            print(
+                                f"[MATCH]   cam{cam_id}_track{track_id} -> EXISTING person "
+                                f"{person_uuid[:8]} body_sim={matches[0]['similarity_score']:.2f}"
+                            )
+
+                    if not matches:
+                        # Brand-new person (no match or same-camera conflict)
                         person_uuid = db.insert_person({
                             "cam_id"         : cam_id,
                             "embedding"      : embedder.serialize(final_emb),
