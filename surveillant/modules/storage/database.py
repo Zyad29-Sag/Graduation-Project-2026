@@ -453,6 +453,30 @@ class Database:
             )
             return [row[0] for row in cursor.fetchall()]
 
+    def get_camera_history(self, person_id: str) -> List[Dict[str, Any]]:
+        """
+        Return all camera_history rows for a person as a list of dicts:
+        [{cam_id, track_id, first_seen, last_seen}, ...].
+
+        Used by the reconciliation worker's co-visibility check (Part 8.5)
+        to compute temporal interval overlap across overlap-partner cameras.
+        """
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT cam_id, track_id, first_seen, last_seen "
+                "FROM camera_history WHERE person_id=?",
+                (person_id,),
+            )
+            return [
+                {
+                    "cam_id":     row[0],
+                    "track_id":   row[1],
+                    "first_seen": row[2],
+                    "last_seen":  row[3],
+                }
+                for row in cursor.fetchall()
+            ]
+
     # ------------------------------------------------------------------
     # Public API — Merge Proposals
     # ------------------------------------------------------------------

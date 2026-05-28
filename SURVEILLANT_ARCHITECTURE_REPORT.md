@@ -31,6 +31,7 @@ Three dedicated thread domains eliminate CPU starvation:
    - Uses **mean-pool** (not max-pool) cosine similarity across all compatible embedding pairs — much more robust to outliers than max-pool.
    - Requires both persons to have ≥ `MIN_GALLERY_FOR_RECONCILIATION = 2` embeddings AND view-coverage ≥ `MIN_VIEW_COVERAGE_FOR_MATCHING = 0.5`.
    - Proposes (does not auto-merge) pairs scoring ≥ `MERGE_CANDIDATE_THRESHOLD`; auto-merges only at ≥ `AUTO_MERGE_THRESHOLD`.
+   - **Co-visibility boost (Part 8.5):** for pairs whose `camera_history` shows ≥ 3 independent moments of temporal overlap on declared overlap-partner cameras, the proposal threshold relaxes from 0.58 to 0.45 — backstop for splits the live matcher missed.
    - Proposal table is deduplicated on each cycle — the same pair won't be inserted twice.
 
 ---
@@ -209,15 +210,26 @@ TRACKING_COAST_FRAMES  = 4      # mostly vestigial — ByteTrack handles coastin
 EMBEDDING_DIM            = 512
 NUM_FRAMES_FOR_EMBEDDING = 4    # aggregated via median
 
-# Identity matching — dual-threshold (same-cam strict, cross-cam lenient)
-# A single threshold cannot separate the overlap zone 0.68–0.72 which contains
-# BOTH same-camera-sequential different-person scores AND cross-camera same-person scores.
-BODY_MATCH_THRESHOLD_SAME_CAM  = 0.75   # sequential same-camera: stricter
-                                        # (returning same person scores 0.85+; 0.75 clears
-                                        # the ~0.72 different-person ceiling for side views)
-BODY_MATCH_THRESHOLD_CROSS_CAM = 0.68   # cross-camera transition: lenient
-                                        # (angle/lighting change drops same-person to 0.68–0.72)
-BODY_MATCH_THRESHOLD = BODY_MATCH_THRESHOLD_CROSS_CAM  # searcher floor / legacy alias
+# Identity matching — TRIPLE threshold (same-cam strict, overlap loose, cross-cam medium)
+# A single threshold cannot separate three regimes that coexist on multi-camera setups:
+#   • Different people, same camera, sequential        : ~0.68–0.72 → must NOT match
+#   • Same person, sequential cross-cam transition     : ~0.68–0.78 → must match
+#   • Same person, overlap-cam simultaneous, opposite angles : ~0.55–0.70 → must match
+BODY_MATCH_THRESHOLD_SAME_CAM  = 0.75   # sequential same-camera: strict
+BODY_MATCH_THRESHOLD_CROSS_CAM = 0.68   # sequential cross-cam: medium
+BODY_MATCH_THRESHOLD_OVERLAP   = 0.62   # Part 8.5 — overlap-cam: loose, only fires when
+                                        # are_overlapping_cams(cur_cam, last_cam) is True
+BODY_MATCH_THRESHOLD = BODY_MATCH_THRESHOLD_CROSS_CAM  # legacy alias / Phase-3 photo-search floor
+                                        # (Phase-2 live ID passes overlap floor explicitly)
+
+# Camera topology (Part 8.5) — user-declared overlap groups; empty = feature off
+CAMERA_OVERLAP_GROUPS: list[set[int]] = []   # e.g. [{1, 2}, {4, 5}]
+
+# Co-visibility boost (Part 8.5, Layer 2) — relax MERGE_CANDIDATE_THRESHOLD for pairs
+# whose camera_history shows repeated lock-step appearances on overlap-partner cams
+CO_VISIBILITY_MIN_MOMENTS                  = 3
+CO_VISIBILITY_MIN_OVERLAP_SEC              = 0.5
+MERGE_CANDIDATE_THRESHOLD_OVERLAP_BOOSTED  = 0.45
 
 # Gallery storage
 BODY_GALLERY_ADD_DISTANCE  = 0.20   # min novelty to store a new view (diversity gate)
@@ -285,7 +297,7 @@ graph TD;
 
     K --> L[Async Worker: OSNet median-aggregated 512-d];
     L --> LF[FAISS in-mem index<br/>top-k cosine search];
-    LF --> M{Context-aware threshold:<br/>cross-cam >= 0.68 / same-cam >= 0.75};
+    LF --> M{Triple-threshold:<br/>overlap-cam >= 0.62 / cross-cam >= 0.68 / same-cam >= 0.75};
     M -- Yes --> N[Bind to existing person_uuid];
     M -- No --> O[Create new person_uuid<br/>with canonical angle_tag];
     O --> P[Store in DB + FAISS via callback];
@@ -313,6 +325,7 @@ The dashed-equivalent path: if FAISS is unavailable, **LF** is replaced by a lin
 | 10 | **FAISS in-memory index (Part 8)**: 916× search speedup at 100 vectors; SQLite stays as source of truth and remains the fallback. Database callbacks keep the two stores in sync for inserts and merges. No functional change visible to the user. |
 | 11 | **Gallery-sponge regression fix**: FAISS was innocent (H3 confirmed). Root cause: `BODY_MATCH_THRESHOLD = 0.65` was inside the different-person score range for WiseNet (~0.65–0.70). Fix 1: raised threshold to 0.72. Fix 2: `FORCE_ACCEPT_MAX_DISTANCE = 0.35` replaces the loose `GALLERY_MAX_DISTANCE = 0.55` guard on canonical-slot force-accept. |
 | 12 | **Dual-threshold context-aware matching**: Single threshold cannot separate same-camera-sequential different-person scores from cross-camera same-person scores (both ~0.68–0.72). Fix: `BODY_MATCH_THRESHOLD_SAME_CAM = 0.75` for same-camera, `BODY_MATCH_THRESHOLD_CROSS_CAM = 0.68` for cross-camera. `searcher.search_by_embedding()` accepts optional `min_threshold` parameter so main.py can request the cross-cam floor. |
+| 13 | **Triple-threshold overlap-aware matching (Part 8.5)**: Cameras sharing a room can view the same person simultaneously from opposite angles; OSNet same-person scores for that case land in 0.55–0.70 — below the 0.68 cross-cam floor, causing ID splits. Fix: third branch `BODY_MATCH_THRESHOLD_OVERLAP = 0.62` fires when `are_overlapping_cams(cur_cam, last_cam)` returns True. User-declares topology via `CAMERA_OVERLAP_GROUPS`. Co-visibility boost added to reconciliation: if two person_ids are seen in lock-step on overlap-partner cameras ≥ 3 times, their merge threshold relaxes from 0.58 to 0.45 (backstop for splits the live matcher missed). |
 
 ---
 
@@ -351,10 +364,11 @@ These bugs were uncovered during expert audit and have been fixed:
 
 ## 6. Next Steps (Parts 9–10 from the Enhancement Proposal)
 
-| Part | Change | Expected Improvement |
-|---|---|---|
-| 9 | **Spatio-temporal camera constraints** (transition-time matrix) | Eliminate physically-impossible cross-camera matches |
-| 10 | **LLM description as secondary matching signal** (Qwen2.5-VL) | Handles dark/occluded cases where visual matching is uncertain |
+| Part | Change | Status | Expected Improvement |
+|---|---|---|---|
+| 8.5 | **Overlap-aware matching** (camera topology, triple threshold + co-visibility reconciliation) | ✅ Complete | Prevents ID splits when same physical person is viewed simultaneously from opposite angles across overlapping cameras |
+| 9 | **Spatio-temporal camera constraints** (transition-time matrix) | 🔲 Planned | Eliminate physically-impossible cross-camera matches (teleport-style false merges) |
+| 10 | **LLM description as secondary matching signal** (Qwen2.5-VL) | 🔲 Planned | Handles dark/occluded cases where visual matching is uncertain |
 
 ### Future improvements not in the proposal
 

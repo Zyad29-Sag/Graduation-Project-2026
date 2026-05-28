@@ -29,6 +29,10 @@ from config.settings import (
     GHOST_TTL_SEC,
     MIN_GALLERY_FOR_RECONCILIATION,
     MIN_VIEW_COVERAGE_FOR_MATCHING,
+    CO_VISIBILITY_MIN_MOMENTS,
+    CO_VISIBILITY_MIN_OVERLAP_SEC,
+    MERGE_CANDIDATE_THRESHOLD_OVERLAP_BOOSTED,
+    are_overlapping_cams,
 )
 
 
@@ -111,8 +115,30 @@ class ReconciliationWorker:
             # Mean-pool requires CONSISTENT similarity — a legitimate merge will
             # score high across most pairs; a false positive will not.
             score = self._mean_pool_similarity(gallery_a, gallery_b)
-            if score < MERGE_CANDIDATE_THRESHOLD:
+
+            # ── Co-visibility boost (Part 8.5, Layer 2) ───────────────────
+            # If the pair has been seen in lock-step on declared overlap-partner
+            # cameras across multiple independent moments, they are almost
+            # certainly the same physical person split by the live matcher.
+            # Two unrelated people would not repeatedly share the exact same
+            # time window on the same overlap pair — that happens by coincidence
+            # at most once or twice.
+            co_vis_moments = self._count_co_visibility_moments(db, pid_a, pid_b)
+            boosted = co_vis_moments >= CO_VISIBILITY_MIN_MOMENTS
+            candidate_thresh = (
+                MERGE_CANDIDATE_THRESHOLD_OVERLAP_BOOSTED
+                if boosted else MERGE_CANDIDATE_THRESHOLD
+            )
+
+            if score < candidate_thresh:
                 continue
+
+            if boosted:
+                print(
+                    f"[RECONCILE:CO-VISIBILITY] {pid_a[:8]} <-> {pid_b[:8]} "
+                    f"moments={co_vis_moments} sim={score:.3f} "
+                    f"(boosted threshold {candidate_thresh:.2f})"
+                )
 
             # Task 4 — check same-camera duplicate
             cams_a = set(db.get_cameras_for_person(pid_a))
@@ -222,6 +248,48 @@ class ReconciliationWorker:
     # ----------------------------------------------------------------
     # Internal helpers
     # ----------------------------------------------------------------
+
+    def _count_co_visibility_moments(self, db, pid_a: str, pid_b: str) -> int:
+        """
+        Count moments where pid_a and pid_b's camera_history intervals
+        temporally overlap on either (a) the same physical camera, or
+        (b) cameras declared in the same CAMERA_OVERLAP_GROUPS entry.
+
+        Each qualifying moment requires the (first_seen, last_seen) intervals
+        to overlap by at least CO_VISIBILITY_MIN_OVERLAP_SEC seconds.
+
+        Same-camera co-visibility is included as a (stronger) signal — the
+        live `same_cam_conflict` guard in main.py blocks new simultaneous
+        same-cam bindings, but it does NOT retroactively fix two persons
+        whose tracks ran concurrently on the same camera before either was
+        bound. This helper catches that historical case too.
+        """
+        history_a = db.get_camera_history(pid_a)
+        history_b = db.get_camera_history(pid_b)
+        if not history_a or not history_b:
+            return 0
+
+        count = 0
+        for row_a in history_a:
+            cam_a = row_a["cam_id"]
+            try:
+                a_start = datetime.datetime.fromisoformat(row_a["first_seen"])
+                a_end   = datetime.datetime.fromisoformat(row_a["last_seen"])
+            except (TypeError, ValueError):
+                continue
+            for row_b in history_b:
+                cam_b = row_b["cam_id"]
+                if cam_a != cam_b and not are_overlapping_cams(cam_a, cam_b):
+                    continue
+                try:
+                    b_start = datetime.datetime.fromisoformat(row_b["first_seen"])
+                    b_end   = datetime.datetime.fromisoformat(row_b["last_seen"])
+                except (TypeError, ValueError):
+                    continue
+                overlap_sec = (min(a_end, b_end) - max(a_start, b_start)).total_seconds()
+                if overlap_sec >= CO_VISIBILITY_MIN_OVERLAP_SEC:
+                    count += 1
+        return count
 
     def _mean_pool_similarity(
         self,

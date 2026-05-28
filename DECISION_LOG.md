@@ -31,6 +31,7 @@
 | Part 6 | Pose-Aware Gallery (canonical views) | ✅ Complete |
 | Part 7 | ByteTrack (replaces DeepSORT) | ✅ Complete |
 | Part 8 | FAISS In-Memory Vector Index | ✅ Complete |
+| Part 8.5 | Overlap-Aware Matching (camera topology, prelude to Part 9) | ✅ Complete |
 | Part 9 | Spatio-Temporal Camera Constraints | 🔲 Not yet implemented |
 | Part 10 | LLM Description Matching (Qwen2.5-VL) | 🔲 Not yet implemented |
 
@@ -301,6 +302,75 @@ DETECTION_CONF         = 0.10   (pass all detections to ByteTrack)
 
 ---
 
+## Part 8.5 — Overlap-Aware Matching (Camera Topology, prelude to Part 9)
+
+### OV-A: Problem statement (2026-05-28)
+
+**What:** The dual-threshold matching (0.75 same-cam / 0.68 cross-cam) was designed for *sequential* cross-camera transitions where the person leaves cam1 and arrives at cam2 with a similar canonical view. It does NOT handle the case where two or more cameras have overlapping fields of view — same room, different angles — and the same physical person appears on cam1 and cam2 *simultaneously*.
+
+**Why it matters:** OSNet's same-person score across a sharp angle change in the same instant lands in 0.55–0.70 — *below* the 0.68 cross-cam threshold. The system would split one physical person into two `person_id`s with no live mechanism to merge them. On WiseNet (5 rooms / hallways with non-trivial camera coverage) this is a visible, observable failure mode that the dual threshold cannot fix alone.
+
+**Dual of Part 9:** Part 9 (spatio-temporal) rejects physically impossible matches. Part 8.5 rescues legitimate matches the visual matcher missed because of an angle gap. Both need topology knowledge; both compose cleanly. Part 8.5 ships first because overlap-splits are observable today.
+
+### OV-B: Layer 1 — Triple-threshold live matching
+
+**Files:** `config/settings.py`, `main.py`
+
+**What:** Replaced the dual-threshold context-aware decision in `main.py`'s embedding worker (~line 542) with a three-way pick:
+
+| Branch | Threshold | Rationale |
+|---|---|---|
+| Same camera (`last_cam == cur_cam`) | `BODY_MATCH_THRESHOLD_SAME_CAM = 0.75` | unchanged — strict to reject same-camera sequential look-alikes |
+| Overlap partner (`are_overlapping_cams(cur_cam, last_cam)`) | `BODY_MATCH_THRESHOLD_OVERLAP = 0.62` | NEW — looser, because same-person sharp-angle-in-same-instant scores from a lower distribution than sequential cross-cam |
+| Cross-cam, non-overlap | `BODY_MATCH_THRESHOLD_CROSS_CAM = 0.68` | unchanged — moderate, sequential transitions land in 0.68–0.78 |
+
+**New config:**
+- `CAMERA_OVERLAP_GROUPS: list[set[int]] = []` — user-configurable declaration of which cam_ids share physical space. Empty default = feature off, drop-in safe.
+- `BODY_MATCH_THRESHOLD_OVERLAP = 0.62`.
+- `are_overlapping_cams(cam_a, cam_b)` helper.
+- `validate_overlap_topology(num_cams)` — warns at startup on disjoint-group violations, unknown cam_ids, threshold-ordering violations. Never raises (WORKING_INSTRUCTIONS §5).
+
+**Searcher floor change (also in `main.py`):** `min_threshold` in the identification search call dropped from `BODY_MATCH_THRESHOLD_CROSS_CAM = 0.68` to `BODY_MATCH_THRESHOLD_OVERLAP = 0.62`. Otherwise the searcher would pre-filter overlap-band candidates before main.py's context check sees them. When `CAMERA_OVERLAP_GROUPS = []`, candidates in [0.62, 0.68) are still returned but then correctly rejected by the cross-cam threshold — harmless overhead.
+
+**`BODY_MATCH_THRESHOLD` (legacy alias) stays at `CROSS_CAM = 0.68`.** This is the floor for callers without camera context (Phase-3 photo search). Live identification passes its own `min_threshold=` override and is unaffected.
+
+**Log format:** `[MATCH:OVERLAP]` (new) for overlap-cam matches alongside `[MATCH]` for same-cam / cross-cam. Cam label format `(overlap-cam(cam1↔cam2))` mirrors the `(cross-cam(cam1→cam2))` / `(same-cam(cam4))` pattern added in FA-D.
+
+**New invariant (#12):** `BODY_MATCH_THRESHOLD_OVERLAP <= BODY_MATCH_THRESHOLD_CROSS_CAM <= BODY_MATCH_THRESHOLD_SAME_CAM`. Also: `(1 - BODY_MATCH_THRESHOLD_OVERLAP) > FORCE_ACCEPT_MAX_DISTANCE` so force-accept doesn't become a sponge on overlap pairs (0.38 > 0.35 at default).
+
+### OV-C: Layer 2 — Co-visibility boost in reconciliation
+
+**File:** `modules/reconciliation/worker.py`, `modules/storage/database.py` (new helper `get_camera_history()`)
+
+**What:** Before computing `mean-pool similarity` and comparing against `MERGE_CANDIDATE_THRESHOLD = 0.58`, the reconciliation cycle now also computes a *co-visibility moment count* for the pair: how many independent moments did the two persons' `camera_history` intervals temporally overlap on either (a) the same physical camera or (b) declared overlap-partner cameras. If `count >= CO_VISIBILITY_MIN_MOMENTS = 3` (each ≥ `CO_VISIBILITY_MIN_OVERLAP_SEC = 0.5` s of overlap), the threshold for THAT PAIR drops from 0.58 to `MERGE_CANDIDATE_THRESHOLD_OVERLAP_BOOSTED = 0.45`.
+
+**Why this works:** Two unrelated people would not repeatedly share the *exact* same time window on the *same* overlap pair across multiple distinct moments — that happens only by coincidence, rarely. One physical person mis-split into two IDs will show up in lock-step on the overlap-partner cameras every time they enter the room.
+
+**Why this is safe:** The mean-pool similarity floor still applies. A pair only gets the boosted treatment if both visual similarity (mean-pool ≥ 0.45) AND repeated co-visibility (≥ 3 moments) agree. Either signal alone is insufficient.
+
+**New log line:** `[RECONCILE:CO-VISIBILITY]` when the boost fires, with moment count and score.
+
+**New database method:** `Database.get_camera_history(person_id)` returns full `(cam_id, track_id, first_seen, last_seen)` rows — needed because `get_cameras_for_person()` only returns distinct cam_ids and discards the timing.
+
+### OV-D: Forward compatibility with Part 9
+
+When Part 9 (spatio-temporal transition matrix) lands, overlap-group pairs get `MIN_TRANSITION_SEC = 0` for free — no special case needed. The two features compose:
+
+| Pair type | Part 9 (future) | Part 8.5 (now) |
+|---|---|---|
+| Same cam | min_transition = 0 | threshold = 0.75 |
+| Overlap partner | min_transition = 0 | threshold = 0.62 |
+| Adjacent non-overlap | min_transition = ~8 s | threshold = 0.68 |
+| Far non-overlap | min_transition = ~30 s | threshold = 0.68 |
+
+### OV-E: Status
+
+- `CAMERA_OVERLAP_GROUPS` default is `[]` → behavior unchanged until the user declares topology for their WiseNet layout.
+- All Phase-2 and Phase-3 regressions verified by syntax/import check; integration validated by per-file `ast.parse()` round-trip.
+- Awaiting user-declared topology to produce live `[MATCH:OVERLAP]` / `[RECONCILE:CO-VISIBILITY]` log evidence on WiseNet videos.
+
+---
+
 ## Reconciliation Worker Improvements
 
 ### RW-A: Mean-pool similarity (Bug D fix)
@@ -353,4 +423,4 @@ DETECTION_CONF         = 0.10   (pass all detections to ByteTrack)
 
 ---
 
-*Last updated: 2026-05-28 — Parts 1–8 complete. Parts 9–10 planned.*
+*Last updated: 2026-05-28 — Parts 1–8 and Part 8.5 (overlap-aware matching) complete. Parts 9–10 planned.*

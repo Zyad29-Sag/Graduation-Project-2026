@@ -191,12 +191,27 @@ def run_phase2(video_paths: list) -> None:
         BODY_MATCH_THRESHOLD,
         BODY_MATCH_THRESHOLD_SAME_CAM,
         BODY_MATCH_THRESHOLD_CROSS_CAM,
+        BODY_MATCH_THRESHOLD_OVERLAP,
+        CAMERA_OVERLAP_GROUPS,
+        are_overlapping_cams,
+        validate_overlap_topology,
         MAX_GALLERY_SIZE,
         TRACK_REGISTRY_PATH, RECONCILIATION_INTERVAL_SEC,
         STALE_TRACK_TIMEOUT, MIN_FRAMES_BETWEEN_SAMPLES,
         BYTETRACK_TRACK_THRESH,
         ENABLE_FAISS, FAISS_AUDIT_MODE,
     )
+
+    # ── Validate overlap topology at startup (warn, never crash) ────────────
+    for _warning in validate_overlap_topology(len(video_paths)):
+        print(_warning)
+    if CAMERA_OVERLAP_GROUPS:
+        print(
+            f"[SURVEILLANT] Overlap topology: {len(CAMERA_OVERLAP_GROUPS)} group(s) "
+            f"— thresholds same={BODY_MATCH_THRESHOLD_SAME_CAM} "
+            f"overlap={BODY_MATCH_THRESHOLD_OVERLAP} "
+            f"cross={BODY_MATCH_THRESHOLD_CROSS_CAM}"
+        )
 
     num_cams = len(video_paths)
     print(f"[SURVEILLANT] Phase 2 starting — {num_cams} camera(s) | CPU mode.")
@@ -527,11 +542,15 @@ def run_phase2(video_paths: list) -> None:
                     embs      = [embedder.extract_body_embedding(cr) for cr in buf]
                     final_emb = embedder.aggregate_embeddings(embs)
 
-                    # Search with the CROSS-CAM floor (0.68) so that cross-camera
-                    # candidates are not filtered out before the context check below.
+                    # Search with the OVERLAP floor (lowest of the three decision
+                    # thresholds) so that overlap-cam AND cross-cam candidates are
+                    # not filtered out before the context check below. When
+                    # CAMERA_OVERLAP_GROUPS is empty, the [0.62, 0.68) band is
+                    # returned but rejected here by the cross-cam threshold —
+                    # harmless extra work for a non-feature configuration.
                     matches = searcher.search_by_embedding(
                         final_emb, query_embedding_type="body", top_k=1,
-                        min_threshold=BODY_MATCH_THRESHOLD_CROSS_CAM,
+                        min_threshold=BODY_MATCH_THRESHOLD_OVERLAP,
                     )
 
                     if matches:
@@ -539,17 +558,27 @@ def run_phase2(video_paths: list) -> None:
                         top_score   = top["similarity_score"]
                         last_cam    = top.get("last_seen_cam")
 
-                        # ── Dual-threshold context-aware acceptance ────────
-                        # Same camera  → stricter (0.75): sequential same-camera
-                        #   different people can score 0.70–0.72 — 0.75 clears it.
-                        # Cross-camera → looser  (0.68): same person angle/lighting
-                        #   change drops scores to 0.68–0.72 — 0.68 catches them.
-                        is_cross_cam = (last_cam is not None and last_cam != cam_id)
-                        effective_thresh = (
-                            BODY_MATCH_THRESHOLD_CROSS_CAM if is_cross_cam
-                            else BODY_MATCH_THRESHOLD_SAME_CAM
-                        )
-                        cam_label = f"cross-cam(cam{last_cam}→cam{cam_id})" if is_cross_cam else f"same-cam(cam{cam_id})"
+                        # ── Triple-threshold context-aware acceptance ──────
+                        # Same camera     → strict (0.75): different people same-cam
+                        #   sequential can score 0.70–0.72 — 0.75 clears it.
+                        # Overlap partner → loose (0.62): same person, sharp angle
+                        #   change in the same room/instant scores 0.55–0.70 —
+                        #   0.62 catches them without admitting unrelated people.
+                        # Cross-cam       → medium (0.68): sequential transitions
+                        #   between non-overlapping cams score 0.68–0.78 — 0.68
+                        #   catches the lower end.
+                        if last_cam is None or last_cam == cam_id:
+                            effective_thresh = BODY_MATCH_THRESHOLD_SAME_CAM
+                            cam_label = f"same-cam(cam{cam_id})"
+                            match_kind = "MATCH"
+                        elif are_overlapping_cams(cam_id, last_cam):
+                            effective_thresh = BODY_MATCH_THRESHOLD_OVERLAP
+                            cam_label = f"overlap-cam(cam{last_cam}↔cam{cam_id})"
+                            match_kind = "MATCH:OVERLAP"
+                        else:
+                            effective_thresh = BODY_MATCH_THRESHOLD_CROSS_CAM
+                            cam_label = f"cross-cam(cam{last_cam}→cam{cam_id})"
+                            match_kind = "MATCH"
 
                         if top_score < effective_thresh:
                             print(
@@ -592,7 +621,7 @@ def run_phase2(video_paths: list) -> None:
                                 if any(c != cam_id for c in known_cams):
                                     db.update_person_status(person_uuid, "multi_view")
                                 print(
-                                    f"[MATCH]   cam{cam_id}_track{track_id} -> EXISTING person "
+                                    f"[{match_kind}]   cam{cam_id}_track{track_id} -> EXISTING person "
                                     f"{person_uuid[:8]} sim={top_score:.3f} ({cam_label})"
                                 )
 
