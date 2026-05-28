@@ -2,6 +2,18 @@
 main.py — SURVEILLANT entry point
 ----------------------------------
 Usage:
+    Phase 1 / 2 — two equivalent ways to specify the cameras:
+
+      (1) Explicit per-file list (original):
+          python main.py --phase 2 --videos data/videos/video1_1.avi \
+              data/videos/video1_2.avi data/videos/video1_3.avi \
+              data/videos/video1_4.avi data/videos/video1_5.avi
+
+      (2) Folder shorthand:
+          python main.py --phase 2 --set set_1
+              # loads ALL video files in data/videos/set_1/ in natural
+              # sort order, equivalent to listing them explicitly.
+
     Phase 1 (detection + tracking + display):
         python main.py --phase 1 --videos data/videos/cam1.mp4 ...
 
@@ -878,7 +890,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--videos",
         nargs="+",
         metavar="VIDEO",
-        help="Paths to video files (one per camera). Required for phase 1.",
+        help="Paths to video files (one per camera). Mutually exclusive with --set.",
+    )
+    parser.add_argument(
+        "--set",
+        dest="video_set",
+        type=str,
+        metavar="NAME_OR_PATH",
+        help=(
+            "Folder containing the video files for this run (one per camera). "
+            "Accepts either a bare folder name (resolved under data/videos/, e.g. "
+            "'set_1') or an explicit relative/absolute path. All video files inside "
+            "the folder are loaded in natural sort order. Mutually exclusive with --videos."
+        ),
     )
     parser.add_argument(
         "--query",
@@ -888,18 +912,98 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# ---------------------------------------------------------------------------
+# Video set resolution
+# ---------------------------------------------------------------------------
+
+_VIDEO_EXTENSIONS = (".avi", ".mp4", ".mov", ".mkv", ".webm")
+
+
+def _natural_sort_key(path):
+    """
+    Natural sort key: splits a filename into text/number runs so that
+    'video1_2.avi' sorts before 'video1_10.avi'. Same logic the OS file
+    explorer uses; ASCII sort would order '10' before '2'.
+    """
+    import re
+    name = path.name if hasattr(path, "name") else str(path)
+    return [int(s) if s.isdigit() else s.lower() for s in re.split(r"(\d+)", name)]
+
+
+def resolve_video_set(name_or_path: str) -> list:
+    """
+    Resolve a folder name or path into a sorted list of video file paths.
+
+    Lookup order:
+      1. If `name_or_path` is an absolute path, use it directly.
+      2. If a relative path exists from cwd, use it.
+      3. Otherwise, try `data/videos/<name_or_path>/` relative to cwd.
+      4. Otherwise, try `<project_root>/data/videos/<name_or_path>/`.
+
+    Returns video file paths sorted by natural order so that
+    'video1_2.avi' precedes 'video1_10.avi'.
+    Raises FileNotFoundError if the folder doesn't exist or contains no videos.
+    """
+    from pathlib import Path
+    from config.settings import VIDEOS_DIR
+
+    candidates = []
+    p = Path(name_or_path)
+    if p.is_absolute():
+        candidates.append(p)
+    else:
+        candidates.append(Path.cwd() / p)
+        candidates.append(Path.cwd() / "data" / "videos" / name_or_path)
+        candidates.append(VIDEOS_DIR / name_or_path)
+
+    folder = next((c for c in candidates if c.is_dir()), None)
+    if folder is None:
+        searched = "\n  ".join(str(c) for c in candidates)
+        raise FileNotFoundError(
+            f"--set: folder '{name_or_path}' not found. Searched:\n  {searched}"
+        )
+
+    videos = sorted(
+        (p for p in folder.iterdir() if p.suffix.lower() in _VIDEO_EXTENSIONS),
+        key=_natural_sort_key,
+    )
+    if not videos:
+        raise FileNotFoundError(
+            f"--set: folder '{folder}' contains no video files "
+            f"(looked for {', '.join(_VIDEO_EXTENSIONS)})."
+        )
+
+    return [str(p) for p in videos]
+
+
 if __name__ == "__main__":
     parser = build_parser()
     args   = parser.parse_args()
 
     if args.phase in [1, 2]:
-        if not args.videos:
-            parser.error("--videos is required for phase 1/2.")
-        
-        if args.phase == 1:
-            run_phase1(args.videos)
+        if args.videos and args.video_set:
+            parser.error("--videos and --set are mutually exclusive; pick one.")
+        if not args.videos and not args.video_set:
+            parser.error("Phase 1/2 requires either --videos or --set.")
+
+        if args.video_set:
+            try:
+                video_paths = resolve_video_set(args.video_set)
+            except FileNotFoundError as exc:
+                parser.error(str(exc))
+            print(
+                f"[SURVEILLANT] --set '{args.video_set}' resolved to "
+                f"{len(video_paths)} video(s):"
+            )
+            for v in video_paths:
+                print(f"    {v}")
         else:
-            run_phase2(args.videos)
+            video_paths = args.videos
+
+        if args.phase == 1:
+            run_phase1(video_paths)
+        else:
+            run_phase2(video_paths)
 
     elif args.phase == 3:
         if not args.query:
