@@ -100,10 +100,26 @@ NUM_FRAMES_FOR_EMBEDDING = 4
 # a reliable decision boundary. ResNet-50 needed 0.63 because its distributions
 # were much wider (same person front→back scored only 0.45–0.65).
 FACE_MATCH_THRESHOLD  = 0.55
-BODY_MATCH_THRESHOLD  = 0.65   # calibrated for real indoor surveillance:
-                               # same person across pose changes: ~0.65-0.85
-                               # different people in similar office clothes: ~0.40-0.62
-                               # 0.60 caused false merges; 0.72 caused false splits
+
+# Dual-threshold matching (introduced after side-view sponge + cross-cam split regression):
+#
+# A single threshold cannot separate two overlapping ranges in the WiseNet dataset:
+#   • Different people, same camera, side view  : observed ~0.70–0.72  → must NOT match
+#   • Same person, different cameras / lighting : observed ~0.68–0.72  → must match
+#
+# Context-aware logic in main.py selects the right threshold per candidate:
+#   SAME camera  → stricter gate  (a truly returning person scores 0.85+; 0.75 safely
+#                                  clears the ~0.72 false-positive ceiling for side views)
+#   CROSS camera → looser gate    (angle/lighting change can drop same-person scores to 0.68)
+BODY_MATCH_THRESHOLD_SAME_CAM  = 0.75
+BODY_MATCH_THRESHOLD_CROSS_CAM = 0.68
+
+# Searcher floor / legacy alias — PersonSearcher._hydrate uses this to filter results
+# before returning them. Set to the lower of the two thresholds so that cross-camera
+# candidates are not discarded by the searcher before main.py can evaluate them.
+# Phase-3 offline photo search uses this value directly (no camera context available).
+BODY_MATCH_THRESHOLD = BODY_MATCH_THRESHOLD_CROSS_CAM
+
 CROSS_TYPE_MULTIPLIER = 0.85
 
 # Legacy aliases
@@ -122,6 +138,17 @@ GALLERY_MAX_DISTANCE       = 0.55   # accepts challenging same-person poses (dis
                                    # up to 0.55 = similarity down to 0.45) while
                                    # blocking obviously-different-person embeddings;
                                    # 0.65 was too permissive — gallery got polluted
+
+# Maximum cosine distance allowed for a FORCE-ACCEPT (canonical-slot fill).
+# Without this, any crop with distance <= GALLERY_MAX_DISTANCE (sim >= 0.45)
+# could be force-accepted into an empty canonical slot — far too loose.
+# The force-accept path bypasses the novelty/diversity gate, so it needs its
+# own tighter guard to prevent wrong-person embeddings from being absorbed when
+# a track is (rarely) wrongly bound to another person's gallery.
+# 0.35 = sim >= 0.65 — matches the pre-fix BODY_MATCH_THRESHOLD, so force-accept
+# requires the same minimum similarity as identification itself.
+FORCE_ACCEPT_MAX_DISTANCE  = 0.35
+
 MAX_GALLERY_SIZE           = 10
 MIN_FRAMES_BETWEEN_SAMPLES = 15
 
@@ -164,6 +191,24 @@ GHOST_TTL_SEC               = 180
 # Minimum gallery size a person must have before being a reconciliation target.
 # 2 is sufficient — 3 was preventing fresh duplicates from ever being caught.
 MIN_GALLERY_FOR_RECONCILIATION = 2
+
+# ---------------------------------------------------------------------------
+# Search backend (Part 8 — FAISS in-memory vector index)
+# ---------------------------------------------------------------------------
+# Kill switch. When False, the PersonSearcher is constructed with
+# faiss_index=None and falls back to the SQLite linear scan. Used for
+# debugging the FAISS regression reported on 2026-05-28 — lets us A/B
+# the system with and without FAISS to determine whether FAISS itself
+# is the cause of the "gallery sponge" / wrong-color binding bug.
+ENABLE_FAISS = True    # H3 confirmed — FAISS is not the problem; re-enabled.
+
+# Diagnostic mode. When True, every identification query runs BOTH the
+# FAISS path AND the SQLite linear scan, and any disagreement above
+# 0.01 in score or any difference in top-1 person_id is logged as
+# [FAISS_DRIFT] ... — this lets us confirm whether FAISS is producing
+# inflated scores compared to the linear cosine scan.
+# Costs ~10 ms per identify call (rare event) — never leave on in prod.
+FAISS_AUDIT_MODE = False
 
 # ---------------------------------------------------------------------------
 # LLM (Ollama + Qwen2.5-VL)

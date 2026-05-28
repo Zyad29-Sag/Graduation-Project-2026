@@ -34,6 +34,7 @@ from config.settings import (
     FACE_GALLERY_ADD_DISTANCE,
     BODY_GALLERY_ADD_DISTANCE,
     GALLERY_MAX_DISTANCE,
+    FORCE_ACCEPT_MAX_DISTANCE,
     MIN_FRAMES_BETWEEN_SAMPLES,
     CANONICAL_VIEWS,
 )
@@ -274,12 +275,21 @@ class GalleryManager:
                     query_2d  = new_emb.reshape(1, -1)
                     sims      = cosine_similarity(query_2d, np.array(compat_vecs))[0]
                     distance  = 1.0 - float(np.max(sims))
-                    if distance <= GALLERY_MAX_DISTANCE:
+                    # Use FORCE_ACCEPT_MAX_DISTANCE (sim >= 0.65), not the
+                    # looser GALLERY_MAX_DISTANCE (sim >= 0.45).
+                    # Force-accept bypasses the novelty/diversity gate, so it
+                    # must apply its own similarity guard to prevent a wrong-
+                    # person crop from being absorbed into a canonical slot.
+                    # Without this, any crop that passes the quality gate and
+                    # isn't obviously garbage (dist < 0.55) would be accepted —
+                    # the gallery sponge grew precisely through this path.
+                    if distance <= FORCE_ACCEPT_MAX_DISTANCE:
                         force_accept = True
                     else:
                         print(
                             f"[GALLERY] person {person_id[:8]} | {canonical_view} slot "
-                            f"REJECTED — garbage crop (dist={distance:.2f} > {GALLERY_MAX_DISTANCE})"
+                            f"REJECTED — too dissimilar from existing gallery "
+                            f"(dist={distance:.2f} > FORCE_ACCEPT_MAX={FORCE_ACCEPT_MAX_DISTANCE})"
                         )
                         return False
                 else:

@@ -177,6 +177,7 @@ def run_phase2(video_paths: list) -> None:
     from modules.storage.database import Database
     from modules.embedding.embedder import PersonEmbedder
     from modules.search.searcher import PersonSearcher
+    from modules.search.faiss_index import FAISSIndex
     from modules.embedding.gallery import GalleryManager
     from modules.reconciliation.worker import ReconciliationWorker
     from modules.preprocessing.quality_gate import CropQualityGate
@@ -187,10 +188,14 @@ def run_phase2(video_paths: list) -> None:
     )
     from config.settings import (
         NUM_FRAMES_FOR_EMBEDDING, SNAPSHOTS_DIR,
-        BODY_MATCH_THRESHOLD, MAX_GALLERY_SIZE,
+        BODY_MATCH_THRESHOLD,
+        BODY_MATCH_THRESHOLD_SAME_CAM,
+        BODY_MATCH_THRESHOLD_CROSS_CAM,
+        MAX_GALLERY_SIZE,
         TRACK_REGISTRY_PATH, RECONCILIATION_INTERVAL_SEC,
         STALE_TRACK_TIMEOUT, MIN_FRAMES_BETWEEN_SAMPLES,
         BYTETRACK_TRACK_THRESH,
+        ENABLE_FAISS, FAISS_AUDIT_MODE,
     )
 
     num_cams = len(video_paths)
@@ -203,7 +208,27 @@ def run_phase2(video_paths: list) -> None:
     color_registry = ColorRegistry()
     db             = Database()
     embedder       = PersonEmbedder()
-    searcher       = PersonSearcher(db, embedder)
+
+    # Part 8 — in-memory FAISS index for fast cosine search.
+    # SQLite remains the source of truth; FAISS is a redundant cache that
+    # stays in sync via Database callbacks. If faiss-cpu isn't installed,
+    # the searcher transparently falls back to the SQLite linear scan.
+    #
+    # Disable via config.ENABLE_FAISS = False to A/B-test the regression
+    # reported on 2026-05-28 (gallery-sponge / wrong-color binding).
+    if ENABLE_FAISS:
+        faiss_index            = FAISSIndex()
+        db.on_embedding_added  = faiss_index.add
+        db.on_merge            = faiss_index.reassign_person
+        n_loaded = faiss_index.rebuild_from_db(db)
+        print(f"[FAISS] populated from SQLite: {n_loaded} vectors across {faiss_index.num_persons} persons")
+        if FAISS_AUDIT_MODE:
+            print("[FAISS] AUDIT MODE active — both FAISS and SQLite paths will run on every identification query; [FAISS_DRIFT] logs any disagreement.")
+    else:
+        faiss_index = None
+        print("[FAISS] DISABLED via config.ENABLE_FAISS — searcher will use the SQLite linear scan.")
+
+    searcher       = PersonSearcher(db, embedder, faiss_index=faiss_index)
     gallery_mgr    = GalleryManager()
     quality_gate   = CropQualityGate()    # Part 2 — preflight before queueing for identification
 
@@ -502,49 +527,74 @@ def run_phase2(video_paths: list) -> None:
                     embs      = [embedder.extract_body_embedding(cr) for cr in buf]
                     final_emb = embedder.aggregate_embeddings(embs)
 
+                    # Search with the CROSS-CAM floor (0.68) so that cross-camera
+                    # candidates are not filtered out before the context check below.
                     matches = searcher.search_by_embedding(
-                        final_emb, query_embedding_type="body", top_k=1
+                        final_emb, query_embedding_type="body", top_k=1,
+                        min_threshold=BODY_MATCH_THRESHOLD_CROSS_CAM,
                     )
 
-                    if matches and matches[0]["similarity_score"] >= BODY_MATCH_THRESHOLD:
-                        candidate_uuid = matches[0]["person_id"]
+                    if matches:
+                        top         = matches[0]
+                        top_score   = top["similarity_score"]
+                        last_cam    = top.get("last_seen_cam")
 
-                        # ── Same-camera guard ──────────────────────────────
-                        # A match is a false positive if another LIVE track on
-                        # the same camera is already bound to the same person.
-                        # We only block when the conflicting track is currently
-                        # active — dead tracks in the registry don't count,
-                        # otherwise a returning person (whose old track died)
-                        # would always be forced to create a new person_id.
-                        with active_tracks_lock:
-                            live_ids = set(active_tracks_per_cam.get(cam_id, set()))
-                        with registry_lock:
-                            same_cam_conflict = any(
-                                pid == candidate_uuid
-                                and k[0] == cam_id
-                                and k[1] != track_id
-                                and k[1] in live_ids   # only block LIVE conflicts
-                                for k, pid in track_registry.items()
-                            )
+                        # ── Dual-threshold context-aware acceptance ────────
+                        # Same camera  → stricter (0.75): sequential same-camera
+                        #   different people can score 0.70–0.72 — 0.75 clears it.
+                        # Cross-camera → looser  (0.68): same person angle/lighting
+                        #   change drops scores to 0.68–0.72 — 0.68 catches them.
+                        is_cross_cam = (last_cam is not None and last_cam != cam_id)
+                        effective_thresh = (
+                            BODY_MATCH_THRESHOLD_CROSS_CAM if is_cross_cam
+                            else BODY_MATCH_THRESHOLD_SAME_CAM
+                        )
+                        cam_label = f"cross-cam(cam{last_cam}→cam{cam_id})" if is_cross_cam else f"same-cam(cam{cam_id})"
 
-                        if same_cam_conflict:
+                        if top_score < effective_thresh:
                             print(
-                                f"[GUARD]   cam{cam_id}_track{track_id} -> same-camera conflict "
-                                f"with {candidate_uuid[:8]} — creating NEW person"
+                                f"[BELOW]   cam{cam_id}_track{track_id} top match "
+                                f"{top['person_id'][:8]} sim={top_score:.3f} < "
+                                f"{effective_thresh} ({cam_label}) — new person"
                             )
                             matches = []   # fall through to new-person branch
                         else:
-                            person_uuid = candidate_uuid
-                            status_out  = "returning"
-                            db.update_last_seen(person_uuid, cam_id, now_str)
-                            known_cams = db.get_cameras_for_person(person_uuid)
-                            db.upsert_camera_history(person_uuid, cam_id, track_id, now_str)
-                            if any(c != cam_id for c in known_cams):
-                                db.update_person_status(person_uuid, "multi_view")
-                            print(
-                                f"[MATCH]   cam{cam_id}_track{track_id} -> EXISTING person "
-                                f"{person_uuid[:8]} body_sim={matches[0]['similarity_score']:.2f}"
-                            )
+                            candidate_uuid = top["person_id"]
+
+                            # ── Same-camera guard ──────────────────────────
+                            # Block if another LIVE track on this camera is already
+                            # bound to the same person (live conflict = simultaneous
+                            # same-camera duplicate). Dead tracks don't count —
+                            # a returning person would otherwise always get a new ID.
+                            with active_tracks_lock:
+                                live_ids = set(active_tracks_per_cam.get(cam_id, set()))
+                            with registry_lock:
+                                same_cam_conflict = any(
+                                    pid == candidate_uuid
+                                    and k[0] == cam_id
+                                    and k[1] != track_id
+                                    and k[1] in live_ids
+                                    for k, pid in track_registry.items()
+                                )
+
+                            if same_cam_conflict:
+                                print(
+                                    f"[GUARD]   cam{cam_id}_track{track_id} -> same-camera conflict "
+                                    f"with {candidate_uuid[:8]} — creating NEW person"
+                                )
+                                matches = []   # fall through to new-person branch
+                            else:
+                                person_uuid = candidate_uuid
+                                status_out  = "returning"
+                                db.update_last_seen(person_uuid, cam_id, now_str)
+                                known_cams = db.get_cameras_for_person(person_uuid)
+                                db.upsert_camera_history(person_uuid, cam_id, track_id, now_str)
+                                if any(c != cam_id for c in known_cams):
+                                    db.update_person_status(person_uuid, "multi_view")
+                                print(
+                                    f"[MATCH]   cam{cam_id}_track{track_id} -> EXISTING person "
+                                    f"{person_uuid[:8]} sim={top_score:.3f} ({cam_label})"
+                                )
 
                     if not matches:
                         # Brand-new person — tag the initial embedding with a
@@ -693,15 +743,29 @@ def run_phase3(query_path: str) -> None:
     from modules.storage.database import Database
     from modules.embedding.embedder import PersonEmbedder
     from modules.search.searcher import PersonSearcher
+    from modules.search.faiss_index import FAISSIndex
+    from config.settings import ENABLE_FAISS
 
     if not os.path.exists(query_path):
         print(f"[ERROR] Query image not found: {query_path}")
         return
 
     print(f"[SURVEILLANT] Phase 3: Searching database for {query_path}...")
-    db = Database()
+    db       = Database()
     embedder = PersonEmbedder()
-    searcher = PersonSearcher(db, embedder)
+
+    # Part 8 — use the FAISS index for offline photo search too. Even on a
+    # one-off query, building the index from the persisted SQLite is cheap
+    # and the search itself is ~1000× faster than the linear scan.
+    if ENABLE_FAISS:
+        faiss_index = FAISSIndex()
+        n_loaded    = faiss_index.rebuild_from_db(db)
+        print(f"[FAISS] populated from SQLite: {n_loaded} vectors across {faiss_index.num_persons} persons")
+    else:
+        faiss_index = None
+        print("[FAISS] DISABLED via config.ENABLE_FAISS — searcher will use the SQLite linear scan.")
+
+    searcher = PersonSearcher(db, embedder, faiss_index=faiss_index)
 
     matches = searcher.search_by_photo(query_path, top_k=5)
     if not matches:

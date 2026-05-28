@@ -41,6 +41,16 @@ class Database:
             self._conn = None
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
+        # Optional hooks for downstream caches (e.g. FAISS index in Part 8).
+        # SQLite remains the source of truth; these callbacks keep the
+        # in-memory vector index in sync. Both default to None so the
+        # Database works standalone without any extra wiring.
+        # Signatures:
+        #   on_embedding_added(person_id: str, embedding: np.ndarray) -> None
+        #   on_merge          (keep_id:   str, remove_id:  str)         -> None
+        self.on_embedding_added = None
+        self.on_merge           = None
+
         self._init_db()
 
     @contextmanager
@@ -327,6 +337,18 @@ class Database:
             if self._in_memory:
                 conn.commit()
 
+        # Notify downstream caches (e.g. FAISS index) AFTER the SQLite
+        # transaction has committed. SQLite remains the source of truth;
+        # this is a redundant in-memory cache for fast cosine search.
+        if self.on_embedding_added is not None:
+            try:
+                emb_arr = np.frombuffer(embedding_bytes, dtype=np.float32)
+                self.on_embedding_added(person_id, emb_arr)
+            except Exception as exc:
+                # Cache sync failures must NEVER take down the embedding
+                # worker — SQLite still has the data.
+                print(f"[DB] on_embedding_added hook raised: {exc}")
+
     def get_gallery(self, person_id: str) -> List[np.ndarray]:
         """Return all gallery embeddings as numpy arrays (vectors only)."""
         with self._get_conn() as conn:
@@ -527,6 +549,14 @@ class Database:
             )
             if self._in_memory:
                 conn.commit()
+
+        # Notify downstream caches AFTER the SQLite transaction.
+        if self.on_merge is not None:
+            try:
+                self.on_merge(keep_id, remove_id)
+            except Exception as exc:
+                print(f"[DB] on_merge hook raised: {exc}")
+
         return moved
 
     # ------------------------------------------------------------------
