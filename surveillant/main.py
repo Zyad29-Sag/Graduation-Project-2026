@@ -14,6 +14,16 @@ Usage:
               # loads ALL video files in data/videos/set_1/ in natural
               # sort order, equivalent to listing them explicitly.
 
+    Phase 4 — LLM body description + natural-language search (Part 10):
+
+      python main.py --phase 4 --describe-all
+          # Describe every person in the DB that has no description yet.
+
+      python main.py --phase 4 --search-text "a fat man with a red t-shirt"
+          # Natural-language search over the description database.
+
+      Combine both flags to describe + search in a single invocation.
+
     Phase 1 (detection + tracking + display):
         python main.py --phase 1 --videos data/videos/cam1.mp4 ...
 
@@ -30,6 +40,7 @@ import argparse
 import sys
 import threading
 import time
+from typing import Optional
 import cv2
 import numpy as np
 
@@ -212,7 +223,10 @@ def run_phase2(video_paths: list) -> None:
         STALE_TRACK_TIMEOUT, MIN_FRAMES_BETWEEN_SAMPLES,
         BYTETRACK_TRACK_THRESH,
         ENABLE_FAISS, FAISS_AUDIT_MODE,
+        ENABLE_DESCRIPTION_WORKER, DESCRIPTION_QUEUE_MAXSIZE,
     )
+    from modules.llm.describer import build_describer
+    from modules.llm.description_worker import DescriptionWorker
 
     # ── Validate overlap topology at startup (warn, never crash) ────────────
     for _warning in validate_overlap_topology(len(video_paths)):
@@ -289,6 +303,12 @@ def run_phase2(video_paths: list) -> None:
     pending_ids  = set()   # (cam_id, track_id) keys queued for identification
     pending_lock = threading.Lock()
 
+    # ── Async LLM description queue (Part 10 / Phase 4) ─────────────────────
+    # In-memory queue is a "wake-up hint" only — durability lives in the
+    # SQLite description_queue table. Producer side never blocks even when
+    # this in-memory queue is full (drop newest; sweep picks it up later).
+    llm_queue = queue.Queue(maxsize=DESCRIPTION_QUEUE_MAXSIZE)
+
     # ── Crop buffers (detection thread only) ───────────────────────────────
     crop_buffer:   dict = {}  # (cam_id, track_id) → list[crop]
     frame_counter: dict = {}  # (cam_id, track_id) → int
@@ -333,6 +353,26 @@ def run_phase2(video_paths: list) -> None:
     )
     recon_thread.start()
     print(f"[SURVEILLANT] Reconciliation worker started (interval={RECONCILIATION_INTERVAL_SEC}s).")
+
+    # ── Part 10 / Phase 4 — Description worker ───────────────────────────────
+    # Daemon thread that consumes description tasks and writes structured
+    # body descriptions to person_descriptions. Never blocks the embedding
+    # worker (uses a bounded in-memory hint queue + the durable
+    # description_queue SQLite table). Backend choice is settings-driven:
+    # qwen-vl (local Ollama, CPU) by default; marlin (remote GPU host) on
+    # demand.
+    if ENABLE_DESCRIPTION_WORKER:
+        describer = build_describer()
+        desc_worker = DescriptionWorker(describer, db, llm_queue)
+        desc_thread = threading.Thread(target=desc_worker.run_forever, daemon=True)
+        desc_thread.start()
+        print(
+            f"[SURVEILLANT] Description worker started "
+            f"(backend={describer.backend_name}, model={describer.model_id})."
+        )
+    else:
+        desc_worker = None
+        print("[SURVEILLANT] Description worker DISABLED via config.ENABLE_DESCRIPTION_WORKER.")
 
     # ─────────────────────────────────────────────────────────────────────────
     # DETECTION THREAD — round-robin, fast loop, NO DB reads, NO embedding
@@ -705,6 +745,19 @@ def run_phase2(video_paths: list) -> None:
                     if gallery_vecs:
                         trackers[cam_id].reinforce_track(track_id, person_uuid, gallery_vecs)
 
+                    # ── Part 10 — enqueue description (Phase 4A) ──
+                    # Durable row in description_queue + in-memory wake-up hint.
+                    # Never blocks: if the in-memory queue is full, drop the hint;
+                    # the periodic sweep in DescriptionWorker picks it up later.
+                    if ENABLE_DESCRIPTION_WORKER and status_out == "new":
+                        try:
+                            db.enqueue_description(person_uuid)
+                            llm_queue.put_nowait({"person_id": person_uuid})
+                        except queue.Full:
+                            pass   # DB row is enough; sweep will catch it
+                        except Exception as exc:
+                            print(f"[DESCRIBE] enqueue failed for {person_uuid[:8]}: {exc}")
+
                 except Exception as exc:
                     import traceback
                     print(
@@ -909,6 +962,32 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         help="Path to a query image. Required for phase 3.",
     )
+
+    # ── Phase 4 — LLM description + text search (Part 10) ───────────────────
+    parser.add_argument(
+        "--describe-all",
+        action="store_true",
+        help=(
+            "Phase 4 only. One-shot: enqueue every person in the DB that has "
+            "no description yet, run them through the configured describer "
+            "backend, write results to person_descriptions, exit."
+        ),
+    )
+    parser.add_argument(
+        "--search-text",
+        type=str,
+        metavar="QUERY",
+        help=(
+            "Phase 4 only. Natural-language search. Example: "
+            "--search-text \"a fat man with a red t-shirt and white hat\""
+        ),
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=10,
+        help="Phase 4 only. Number of results to return from --search-text (default 10).",
+    )
     return parser
 
 
@@ -976,6 +1055,72 @@ def resolve_video_set(name_or_path: str) -> list:
     return [str(p) for p in videos]
 
 
+# ---------------------------------------------------------------------------
+# Phase 4 — LLM description + natural-language search (Part 10)
+# ---------------------------------------------------------------------------
+
+def run_phase4(describe_all: bool, search_text: Optional[str], top_k: int) -> None:
+    """
+    Phase-4 entry point. Two modes:
+
+    --describe-all
+        Walks every person in the DB with no `latest_description_id`,
+        enqueues them, and processes them synchronously through the
+        configured describer backend. Exits when the queue drains.
+
+    --search-text "QUERY"
+        Parses the query, runs Stage-1 SQL filter + Stage-2 soft rerank
+        (and Stage-3 sentence-transformer fallback if Stage 1 is empty),
+        prints ranked results, and exits.
+
+    Both flags can be passed in the same invocation: descriptions are
+    generated first, then the search runs against the freshly-populated
+    DB.
+    """
+    import queue as _queue
+    from modules.storage.database import Database
+    from modules.llm.describer import build_describer
+    from modules.llm.description_worker import DescriptionWorker
+    from modules.search.text_search import TextSearchEngine, format_results
+
+    db = Database()
+
+    # 1. --describe-all
+    if describe_all:
+        describer = build_describer()
+        print(
+            f"[PHASE4] describe-all using backend={describer.backend_name} "
+            f"model={describer.model_id}"
+        )
+        # Enqueue every person without a description
+        missing = db.get_persons_without_description(limit=10_000)
+        for pid in missing:
+            db.enqueue_description(pid)
+        print(f"[PHASE4] enqueued {len(missing)} person(s) for description.")
+
+        # Drain the queue inline (no daemon thread — this is a one-shot).
+        worker = DescriptionWorker(describer, db, _queue.Queue())
+        worker.startup_recovery()
+        # Process until claim_next_description returns None
+        n_processed = 0
+        while True:
+            claim = db.claim_next_description()
+            if claim is None:
+                break
+            worker._handle(claim)   # private path; we own the worker
+            n_processed += 1
+        print(f"[PHASE4] described {n_processed} person(s). "
+              f"Stats: {worker.stats()}")
+
+    # 2. --search-text
+    if search_text:
+        engine = TextSearchEngine(db)
+        results = engine.search(search_text, top_k=top_k)
+        print()
+        print(f'[PHASE4] search-text: "{search_text}"')
+        print(format_results(results))
+
+
 if __name__ == "__main__":
     parser = build_parser()
     args   = parser.parse_args()
@@ -1009,6 +1154,19 @@ if __name__ == "__main__":
         if not args.query:
             parser.error("--query is required for phase 3.")
         run_phase3(args.query)
+
+    elif args.phase == 4:
+        # Part 10 — LLM body description + natural-language search.
+        # Either flag (or both) must be present.
+        if not (args.describe_all or args.search_text):
+            parser.error(
+                "Phase 4 requires --describe-all and/or --search-text \"...\""
+            )
+        run_phase4(
+            describe_all = args.describe_all,
+            search_text  = args.search_text,
+            top_k        = args.top_k,
+        )
 
     else:
         print(f"[SURVEILLANT] Phase {args.phase} is not yet implemented.")

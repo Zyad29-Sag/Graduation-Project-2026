@@ -68,20 +68,21 @@ class Database:
         with self._get_conn() as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS persons (
-                    person_id           TEXT PRIMARY KEY,
-                    first_seen_cam      INTEGER,
-                    first_seen_time     TEXT,
-                    last_seen_cam       INTEGER,
-                    last_seen_time      TEXT,
-                    status              TEXT DEFAULT 'unverified',
-                    gallery_size        INTEGER DEFAULT 0,
-                    known_angles        TEXT DEFAULT '[]',
-                    last_gallery_update TEXT,
-                    description         TEXT,
-                    gender              TEXT,
-                    age_range           TEXT,
-                    snapshot_paths      TEXT DEFAULT '[]',
-                    created_at          TEXT NOT NULL
+                    person_id              TEXT PRIMARY KEY,
+                    first_seen_cam         INTEGER,
+                    first_seen_time        TEXT,
+                    last_seen_cam          INTEGER,
+                    last_seen_time         TEXT,
+                    status                 TEXT DEFAULT 'unverified',
+                    gallery_size           INTEGER DEFAULT 0,
+                    known_angles           TEXT DEFAULT '[]',
+                    last_gallery_update    TEXT,
+                    description            TEXT,
+                    gender                 TEXT,
+                    age_range              TEXT,
+                    snapshot_paths         TEXT DEFAULT '[]',
+                    latest_description_id  INTEGER,
+                    created_at             TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS person_embeddings (
@@ -115,10 +116,46 @@ class Database:
                     resolved_at     TEXT
                 );
 
+                -- ── Part 10 (Phase 4) ─────────────────────────────────────
+                -- One row per VLM-generated description. Re-describes
+                -- ACCUMULATE — never UPDATE-overwrite. The persons row
+                -- carries a denormalised pointer (latest_description_id)
+                -- for fast joins, but the full history is preserved here.
+                CREATE TABLE IF NOT EXISTS person_descriptions (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    person_id       TEXT NOT NULL,
+                    described_at    TEXT NOT NULL,
+                    backend         TEXT NOT NULL,
+                    model_id        TEXT NOT NULL,
+                    snapshots_used  TEXT NOT NULL,
+                    attributes      TEXT NOT NULL,
+                    summary         TEXT,
+                    confidence      REAL,
+                    FOREIGN KEY (person_id) REFERENCES persons(person_id)
+                );
+
+                -- Durable description-job queue. Survives restarts so the
+                -- DescriptionWorker can recover in-progress / pending rows
+                -- on next startup. Status transitions are append-only:
+                --   pending → in_progress → done | failed
+                CREATE TABLE IF NOT EXISTS description_queue (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    person_id    TEXT NOT NULL,
+                    enqueued_at  TEXT NOT NULL,
+                    status       TEXT NOT NULL DEFAULT 'pending',
+                    last_error   TEXT,
+                    attempts     INTEGER DEFAULT 0,
+                    FOREIGN KEY (person_id) REFERENCES persons(person_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_gallery_pid
                     ON person_embeddings(person_id);
                 CREATE INDEX IF NOT EXISTS idx_cam_history_pid
                     ON camera_history(person_id);
+                CREATE INDEX IF NOT EXISTS idx_desc_pid
+                    ON person_descriptions(person_id);
+                CREATE INDEX IF NOT EXISTS idx_descq_status
+                    ON description_queue(status);
             """)
             if self._in_memory:
                 conn.commit()
@@ -135,6 +172,8 @@ class Database:
             "ALTER TABLE persons ADD COLUMN known_angles TEXT DEFAULT '[]'",
             "ALTER TABLE persons ADD COLUMN last_gallery_update TEXT",
             "ALTER TABLE person_embeddings ADD COLUMN source_cam INTEGER",
+            # Part 10 — Phase 4 LLM description
+            "ALTER TABLE persons ADD COLUMN latest_description_id INTEGER",
         ]
         with self._get_conn() as conn:
             for sql in migrations:
@@ -142,6 +181,36 @@ class Database:
                     conn.execute(sql)
                 except sqlite3.OperationalError:
                     pass  # column already exists
+            # Ensure Part-10 tables exist on legacy DBs
+            for ddl in (
+                """CREATE TABLE IF NOT EXISTS person_descriptions (
+                       id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                       person_id       TEXT NOT NULL,
+                       described_at    TEXT NOT NULL,
+                       backend         TEXT NOT NULL,
+                       model_id        TEXT NOT NULL,
+                       snapshots_used  TEXT NOT NULL,
+                       attributes      TEXT NOT NULL,
+                       summary         TEXT,
+                       confidence      REAL,
+                       FOREIGN KEY (person_id) REFERENCES persons(person_id)
+                   )""",
+                """CREATE TABLE IF NOT EXISTS description_queue (
+                       id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                       person_id    TEXT NOT NULL,
+                       enqueued_at  TEXT NOT NULL,
+                       status       TEXT NOT NULL DEFAULT 'pending',
+                       last_error   TEXT,
+                       attempts     INTEGER DEFAULT 0,
+                       FOREIGN KEY (person_id) REFERENCES persons(person_id)
+                   )""",
+                "CREATE INDEX IF NOT EXISTS idx_desc_pid ON person_descriptions(person_id)",
+                "CREATE INDEX IF NOT EXISTS idx_descq_status ON description_queue(status)",
+            ):
+                try:
+                    conn.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass
 
     # ------------------------------------------------------------------
     # Public API — Persons
@@ -478,6 +547,290 @@ class Database:
             ]
 
     # ------------------------------------------------------------------
+    # Public API — LLM Descriptions (Part 10 / Phase 4)
+    # ------------------------------------------------------------------
+
+    def enqueue_description(self, person_id: str) -> None:
+        """
+        Upsert a 'pending' row into description_queue for this person.
+
+        Idempotent: if a pending or in-progress row already exists, do nothing
+        (avoid double-describing the same person concurrently). If the only
+        prior row is 'done' or 'failed', insert a fresh pending row so a
+        re-describe can be requested later.
+        """
+        now = datetime.datetime.now().isoformat()
+        with self._get_conn() as conn:
+            existing = conn.execute(
+                """SELECT id FROM description_queue
+                   WHERE person_id=? AND status IN ('pending', 'in_progress')""",
+                (person_id,),
+            ).fetchone()
+            if existing:
+                return
+            conn.execute(
+                "INSERT INTO description_queue (person_id, enqueued_at, status) "
+                "VALUES (?, ?, 'pending')",
+                (person_id, now),
+            )
+            if self._in_memory:
+                conn.commit()
+
+    def claim_next_description(self) -> Optional[Dict[str, Any]]:
+        """
+        Atomically claim the oldest 'pending' row, marking it 'in_progress',
+        and return it. Returns None if nothing is pending.
+
+        SQLite doesn't support UPDATE ... RETURNING in older versions, so we
+        do a SELECT + UPDATE inside one connection — safe under the WAL +
+        single-claimer-thread invariant (only one DescriptionWorker thread).
+        """
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """SELECT id, person_id, enqueued_at, attempts
+                   FROM description_queue
+                   WHERE status = 'pending'
+                   ORDER BY id ASC
+                   LIMIT 1"""
+            ).fetchone()
+            if not row:
+                return None
+            conn.execute(
+                "UPDATE description_queue SET status='in_progress' WHERE id=?",
+                (row["id"],),
+            )
+            if self._in_memory:
+                conn.commit()
+            return dict(row)
+
+    def complete_description(self, queue_id: int, description_id: int) -> None:
+        """Mark the queue row done and point the person at the new description."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE description_queue SET status='done' WHERE id=?",
+                (queue_id,),
+            )
+            conn.execute(
+                "UPDATE persons SET latest_description_id=? "
+                "WHERE person_id=(SELECT person_id FROM description_queue WHERE id=?)",
+                (description_id, queue_id),
+            )
+            if self._in_memory:
+                conn.commit()
+
+    def fail_description(self, queue_id: int, error_msg: str, max_attempts: int = 3) -> None:
+        """
+        Record a backend failure for a queue row. If the row has now exceeded
+        max_attempts, mark it 'failed'; otherwise return it to 'pending' so the
+        next loop iteration / sweep picks it up.
+        """
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "SELECT attempts FROM description_queue WHERE id=?", (queue_id,)
+            ).fetchone()
+            if not cur:
+                return
+            new_attempts = (cur[0] or 0) + 1
+            new_status = "failed" if new_attempts >= max_attempts else "pending"
+            conn.execute(
+                "UPDATE description_queue SET status=?, attempts=?, last_error=? WHERE id=?",
+                (new_status, new_attempts, error_msg[:1000], queue_id),
+            )
+            if self._in_memory:
+                conn.commit()
+
+    def insert_description(
+        self,
+        person_id: str,
+        backend: str,
+        model_id: str,
+        snapshots_used: List[str],
+        attributes: Dict[str, Any],
+        summary: Optional[str],
+        confidence: Optional[float] = None,
+    ) -> int:
+        """Insert a new description row and return its id."""
+        now = datetime.datetime.now().isoformat()
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                """INSERT INTO person_descriptions
+                   (person_id, described_at, backend, model_id,
+                    snapshots_used, attributes, summary, confidence)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    person_id, now, backend, model_id,
+                    json.dumps(snapshots_used),
+                    json.dumps(attributes),
+                    summary,
+                    confidence,
+                ),
+            )
+            new_id = cur.lastrowid
+            if self._in_memory:
+                conn.commit()
+            return new_id
+
+    def get_latest_description(self, person_id: str) -> Optional[Dict[str, Any]]:
+        """Return the latest description row for a person, or None."""
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """SELECT d.* FROM persons p
+                   LEFT JOIN person_descriptions d
+                   ON p.latest_description_id = d.id
+                   WHERE p.person_id = ?""",
+                (person_id,),
+            ).fetchone()
+            if not row or row["id"] is None:
+                return None
+            out = dict(row)
+            try:
+                out["attributes"] = json.loads(out.get("attributes") or "{}")
+            except (TypeError, ValueError):
+                out["attributes"] = {}
+            try:
+                out["snapshots_used"] = json.loads(out.get("snapshots_used") or "[]")
+            except (TypeError, ValueError):
+                out["snapshots_used"] = []
+            return out
+
+    def get_persons_without_description(self, limit: int = 100) -> List[str]:
+        """Return person_ids with no latest_description_id — sweep targets."""
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "SELECT person_id FROM persons "
+                "WHERE latest_description_id IS NULL "
+                "ORDER BY created_at ASC LIMIT ?",
+                (limit,),
+            )
+            return [row[0] for row in cur.fetchall()]
+
+    def search_persons_by_attributes(
+        self, filters: Dict[str, Any], limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Stage 1 of natural-language search (Phase 4B).
+
+        `filters` is a dict matching the description schema (any subset).
+        Returns candidate persons with their latest description attributes:
+            [{person_id, attributes, summary, last_seen_cam, last_seen_time,
+              snapshot_paths}, ...]
+
+        Enum fields → exact match on json_extract(attributes, '$.field').
+        Phrase fields (clothing_top, clothing_bottom, headwear) → LIKE.
+        Accessories (list) → LIKE on the JSON list serialization.
+
+        Missing filter values are ignored (no filter applied).
+        """
+        # Sanitise inputs — only known fields are filterable.
+        exact_fields  = (
+            "gender", "age_range", "body_build", "height_class",
+            "hair_color", "hair_length", "beard", "glasses",
+            "clothing_top_color", "clothing_bottom_color", "headwear_color",
+        )
+        phrase_fields = ("clothing_top", "clothing_bottom", "headwear")
+        list_fields   = ("accessories",)
+
+        clauses: list = []
+        params:  list = []
+        for f in exact_fields:
+            v = filters.get(f)
+            if v is None or v == "" or v == "unknown":
+                continue
+            clauses.append(f"json_extract(d.attributes, '$.{f}') = ?")
+            params.append(str(v))
+        for f in phrase_fields:
+            v = filters.get(f)
+            if v is None or v == "":
+                continue
+            clauses.append(f"LOWER(json_extract(d.attributes, '$.{f}')) LIKE ?")
+            params.append(f"%{str(v).lower()}%")
+        for f in list_fields:
+            v = filters.get(f)
+            if not v:
+                continue
+            # `v` is a list of accessory phrases; OR them.
+            sub = []
+            for item in (v if isinstance(v, list) else [v]):
+                sub.append(f"LOWER(d.attributes) LIKE ?")
+                params.append(f"%{str(item).lower()}%")
+            if sub:
+                clauses.append("(" + " OR ".join(sub) + ")")
+
+        where = (" AND " + " AND ".join(clauses)) if clauses else ""
+        sql = (
+            "SELECT p.person_id, p.last_seen_cam, p.last_seen_time, "
+            "       p.snapshot_paths, d.attributes, d.summary, d.id AS desc_id "
+            "FROM persons p "
+            "INNER JOIN person_descriptions d ON p.latest_description_id = d.id "
+            "WHERE 1=1" + where + " "
+            "ORDER BY p.last_seen_time DESC LIMIT ?"
+        )
+        params.append(limit)
+
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, params).fetchall()
+
+        results = []
+        for row in rows:
+            try:
+                attrs = json.loads(row["attributes"] or "{}")
+            except (TypeError, ValueError):
+                attrs = {}
+            try:
+                snaps = json.loads(row["snapshot_paths"] or "[]")
+            except (TypeError, ValueError):
+                snaps = []
+            results.append({
+                "person_id":      row["person_id"],
+                "last_seen_cam":  row["last_seen_cam"],
+                "last_seen_time": row["last_seen_time"],
+                "snapshot_paths": snaps,
+                "attributes":     attrs,
+                "summary":        row["summary"],
+                "desc_id":        row["desc_id"],
+            })
+        return results
+
+    def get_all_summaries(self) -> List[Dict[str, Any]]:
+        """
+        Return (person_id, summary, snapshot_paths, last_seen_*) for every
+        person with at least one description — used by the Stage-3 text
+        fallback in TextSearchEngine.
+        """
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT p.person_id, p.last_seen_cam, p.last_seen_time, "
+                "       p.snapshot_paths, d.summary, d.attributes, d.id AS desc_id "
+                "FROM persons p "
+                "INNER JOIN person_descriptions d ON p.latest_description_id = d.id "
+                "WHERE d.summary IS NOT NULL"
+            ).fetchall()
+        out = []
+        for row in rows:
+            try:
+                snaps = json.loads(row["snapshot_paths"] or "[]")
+            except (TypeError, ValueError):
+                snaps = []
+            try:
+                attrs = json.loads(row["attributes"] or "{}")
+            except (TypeError, ValueError):
+                attrs = {}
+            out.append({
+                "person_id":      row["person_id"],
+                "last_seen_cam":  row["last_seen_cam"],
+                "last_seen_time": row["last_seen_time"],
+                "snapshot_paths": snaps,
+                "summary":        row["summary"],
+                "attributes":     attrs,
+                "desc_id":        row["desc_id"],
+            })
+        return out
+
+    # ------------------------------------------------------------------
     # Public API — Merge Proposals
     # ------------------------------------------------------------------
 
@@ -540,6 +893,31 @@ class Database:
             conn.execute(
                 "UPDATE camera_history SET person_id=? WHERE person_id=?",
                 (keep_id, remove_id),
+            )
+
+            # Part 10 — re-point any LLM descriptions from remove_id to keep_id
+            # so the merged person inherits the description history of both.
+            # latest_description_id on keep_id keeps whatever it had (don't
+            # downgrade); the merged-in descriptions are still discoverable
+            # via person_descriptions.person_id = keep_id.
+            conn.execute(
+                "UPDATE person_descriptions SET person_id=? WHERE person_id=?",
+                (keep_id, remove_id),
+            )
+            # If keep_id had no description yet but remove_id had one, inherit it.
+            conn.execute("""
+                UPDATE persons
+                   SET latest_description_id = (
+                       SELECT MAX(id) FROM person_descriptions
+                       WHERE person_id = ?
+                   )
+                 WHERE person_id = ? AND latest_description_id IS NULL
+            """, (keep_id, keep_id))
+            # Cancel any pending description_queue rows for the removed person.
+            conn.execute(
+                "UPDATE description_queue SET status='done', last_error='merged' "
+                "WHERE person_id=? AND status IN ('pending', 'in_progress')",
+                (remove_id,),
             )
 
             # Keep earlier first_seen_time

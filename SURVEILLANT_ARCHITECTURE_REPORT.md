@@ -6,11 +6,11 @@ The SURVEILLANT system is a multi-camera real-time person re-identification (Re-
 
 ## 1. Core Architecture Overview
 
-The system is designed around a multi-threaded, asynchronous processing pipeline that separates high-frequency tasks (bounding box tracking) from low-frequency, CPU-intensive tasks (feature extraction and database reconciliation).
+The system is designed around a multi-threaded, asynchronous processing pipeline that separates high-frequency tasks (bounding box tracking) from low-frequency, CPU-intensive tasks (feature extraction, database reconciliation, and LLM description).
 
 ### 1.1 The Threading Model
 
-Three dedicated thread domains eliminate CPU starvation:
+Four dedicated thread domains eliminate CPU starvation:
 
 1. **Detection Loop (Round-Robin Worker)**
    - Cycles through all cameras one at a time — one YOLO inference per cycle — eliminating parallel-process CPU contention.
@@ -33,6 +33,13 @@ Three dedicated thread domains eliminate CPU starvation:
    - Proposes (does not auto-merge) pairs scoring ≥ `MERGE_CANDIDATE_THRESHOLD`; auto-merges only at ≥ `AUTO_MERGE_THRESHOLD`.
    - **Co-visibility boost (Part 8.5):** for pairs whose `camera_history` shows ≥ 3 independent moments of temporal overlap on declared overlap-partner cameras, the proposal threshold relaxes from 0.58 to 0.45 — backstop for splits the live matcher missed.
    - Proposal table is deduplicated on each cycle — the same pair won't be inserted twice.
+
+4. **Background Description Worker (Part 10 / Phase 4)**
+   - Daemon thread mirroring the ReconciliationWorker pattern (`_stop_event`, per-task try/except, never crashes).
+   - Consumes a bounded in-memory `llm_queue` (wake-up hints from the embedding worker) plus a durable `description_queue` SQLite table (survives restarts).
+   - Loop: drain hint → periodic sweep for persons with NULL `latest_description_id` → `claim_next_description()` atomic claim → pick the sharpest snapshot through `CropQualityGate` → call the configured `Describer` backend → write structured JSON to `person_descriptions` → set `persons.latest_description_id`.
+   - **Two backends behind one ABC:** `QwenVLOllamaDescriber` (CPU, local Ollama, default) and `MarlinRemoteDescriber` (POSTs base64 snapshots to a remote GPU host running `modules/llm/marlin_server/serve.py`). Selected via `DESCRIPTION_BACKEND` config flag.
+   - **Re-describe-safe:** rows accumulate; the latest pointer moves forward. Merges re-point all description rows from the removed person to the kept person inside the same transaction.
 
 ---
 
@@ -231,6 +238,17 @@ CO_VISIBILITY_MIN_MOMENTS                  = 3
 CO_VISIBILITY_MIN_OVERLAP_SEC              = 0.5
 MERGE_CANDIDATE_THRESHOLD_OVERLAP_BOOSTED  = 0.45
 
+# LLM body description + natural-language search (Part 10 / Phase 4)
+DESCRIPTION_BACKEND                = "qwen-vl"   # or "marlin"
+OLLAMA_VLM_MODEL                   = "qwen2.5vl:2b"   # describer (image -> JSON)
+OLLAMA_QUERY_MODEL                 = "qwen2.5:3b"     # query parser (text -> JSON)
+MARLIN_HOST                        = ""               # http://gpu-host:8000 when used
+ENABLE_DESCRIPTION_WORKER          = True
+DESCRIPTION_QUEUE_MAXSIZE          = 200
+DESCRIPTION_SWEEP_INTERVAL_SEC     = 60
+MAX_DESCRIPTION_ATTEMPTS           = 3
+ENABLE_TEXT_FALLBACK_RERANK        = True   # Stage-3 sentence-transformers fallback
+
 # Gallery storage
 BODY_GALLERY_ADD_DISTANCE  = 0.20   # min novelty to store a new view (diversity gate)
 GALLERY_MAX_DISTANCE       = 0.55   # max distance before crop = garbage
@@ -302,6 +320,14 @@ graph TD;
     M -- No --> O[Create new person_uuid<br/>with canonical angle_tag];
     O --> P[Store in DB + FAISS via callback];
     N --> P;
+    O --> Q[Enqueue description<br/>Part 10 / Phase 4];
+    Q --> R[DescriptionWorker daemon];
+    R --> R1[Pick sharpest snapshot<br/>via CropQualityGate];
+    R1 --> R2{Describer backend};
+    R2 -- qwen-vl --> R3[Ollama qwen2.5vl:2b<br/>local CPU];
+    R2 -- marlin --> R4[Marlin-2B remote GPU<br/>HTTP /describe];
+    R3 --> R5[INSERT person_descriptions<br/>UPDATE latest_description_id];
+    R4 --> R5;
 ```
 
 The dashed-equivalent path: if FAISS is unavailable, **LF** is replaced by a linear SQLite scan with the same semantics. No other node changes.
@@ -326,6 +352,7 @@ The dashed-equivalent path: if FAISS is unavailable, **LF** is replaced by a lin
 | 11 | **Gallery-sponge regression fix**: FAISS was innocent (H3 confirmed). Root cause: `BODY_MATCH_THRESHOLD = 0.65` was inside the different-person score range for WiseNet (~0.65–0.70). Fix 1: raised threshold to 0.72. Fix 2: `FORCE_ACCEPT_MAX_DISTANCE = 0.35` replaces the loose `GALLERY_MAX_DISTANCE = 0.55` guard on canonical-slot force-accept. |
 | 12 | **Dual-threshold context-aware matching**: Single threshold cannot separate same-camera-sequential different-person scores from cross-camera same-person scores (both ~0.68–0.72). Fix: `BODY_MATCH_THRESHOLD_SAME_CAM = 0.75` for same-camera, `BODY_MATCH_THRESHOLD_CROSS_CAM = 0.68` for cross-camera. `searcher.search_by_embedding()` accepts optional `min_threshold` parameter so main.py can request the cross-cam floor. |
 | 13 | **Triple-threshold overlap-aware matching (Part 8.5)**: Cameras sharing a room can view the same person simultaneously from opposite angles; OSNet same-person scores for that case land in 0.55–0.70 — below the 0.68 cross-cam floor, causing ID splits. Fix: third branch `BODY_MATCH_THRESHOLD_OVERLAP = 0.62` fires when `are_overlapping_cams(cur_cam, last_cam)` returns True. User-declares topology via `CAMERA_OVERLAP_GROUPS`. Co-visibility boost added to reconciliation: if two person_ids are seen in lock-step on overlap-partner cameras ≥ 3 times, their merge threshold relaxes from 0.58 to 0.45 (backstop for splits the live matcher missed). |
+| 14 | **LLM body description + natural-language search (Part 10 / Phase 4A+4B)**: Embedding-only Re-ID can't answer "find a man in a red t-shirt". Adds (a) abstract `Describer` ABC with two backends — `QwenVLOllamaDescriber` (CPU, default) and `MarlinRemoteDescriber` (POSTs to GPU host running `modules/llm/marlin_server/serve.py`); (b) append-only `person_descriptions` table with `latest_description_id` denormalised pointer; (c) durable `description_queue` job table; (d) `DescriptionWorker` daemon mirroring ReconciliationWorker pattern, never blocks embedding worker; (e) `QueryParser` (text-only Ollama, `qwen2.5:3b`) + `TextSearchEngine` (Stage 1 SQL filter via `json_extract`, Stage 2 synonym-aware soft rerank, Stage 3 sentence-transformers fallback). CLI: `--describe-all`, `--search-text "..."`. Phase 4C/4D (multi-snapshot consensus, color sanity-check, re-description triggers, hybrid photo+text rerank) deferred. |
 
 ---
 
@@ -362,13 +389,14 @@ These bugs were uncovered during expert audit and have been fixed:
 
 ---
 
-## 6. Next Steps (Parts 9–10 from the Enhancement Proposal)
+## 6. Next Steps
 
 | Part | Change | Status | Expected Improvement |
 |---|---|---|---|
 | 8.5 | **Overlap-aware matching** (camera topology, triple threshold + co-visibility reconciliation) | ✅ Complete | Prevents ID splits when same physical person is viewed simultaneously from opposite angles across overlapping cameras |
+| 10 (4A+4B) | **LLM body description + natural-language search** (Qwen2.5-VL local / Marlin-2B remote) | ✅ Complete | "Find a fat man in a red t-shirt and white hat" search; descriptions populate as new persons are bound |
 | 9 | **Spatio-temporal camera constraints** (transition-time matrix) | 🔲 Planned | Eliminate physically-impossible cross-camera matches (teleport-style false merges) |
-| 10 | **LLM description as secondary matching signal** (Qwen2.5-VL) | 🔲 Planned | Handles dark/occluded cases where visual matching is uncertain |
+| 10 (4C/4D) | Multi-snapshot consensus, deterministic HSV color sanity-check, re-description on appearance change, hybrid photo+text rerank | 🔲 Deferred | Higher-quality, more robust descriptions; combines visual + textual recall |
 
 ### Future improvements not in the proposal
 

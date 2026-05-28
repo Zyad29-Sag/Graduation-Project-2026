@@ -33,7 +33,8 @@
 | Part 8 | FAISS In-Memory Vector Index | ✅ Complete |
 | Part 8.5 | Overlap-Aware Matching (camera topology, prelude to Part 9) | ✅ Complete |
 | Part 9 | Spatio-Temporal Camera Constraints | 🔲 Not yet implemented |
-| Part 10 | LLM Description Matching (Qwen2.5-VL) | 🔲 Not yet implemented |
+| Part 10 (Phase 4A+4B) | LLM Body Description + Natural-Language Search | ✅ Complete |
+| Part 10 (Phase 4C/4D) | Multi-snapshot consensus, color sanity-check, re-description triggers, hybrid photo+text rerank | 🔲 Deferred |
 
 ---
 
@@ -372,6 +373,137 @@ When Part 9 (spatio-temporal transition matrix) lands, overlap-group pairs get `
 
 ---
 
+## Part 10 (Phase 4A + 4B) — LLM Body Description + Natural-Language Search
+
+### LL-A: Problem statement (2026-05-28)
+
+**What:** Parts 1–8.5 give a stable `person_id` and a multi-view body gallery for each person, which makes "is this the same person?" queries work but leaves the system blind to semantics — "find a man in a red t-shirt and white hat" cannot be answered because the database stores embedding vectors, not appearance attributes.
+
+**Why it matters:** A graduation demo needs a query interface the human operator can speak. Cross-camera identity tracking is invisible to a non-technical audience; natural-language search is the headline feature that makes the work feel real.
+
+### LL-B: Model choice — Marlin-2B primary, Qwen2.5-VL fallback
+
+**Decision (user-driven, 2026-05-28):** Use `NemoStation/Marlin-2B` (Apache-2.0, video VLM) as the primary describer, with `qwen2.5vl:2b` via local Ollama as the CPU fallback.
+
+**Why two backends:**
+- Marlin-2B is a video-trained VLM and requires a GPU per its model card. SURVEILLANT's local target is CPU-only.
+- We resolve this with a remote-HTTP architecture: a small FastAPI host (`modules/llm/marlin_server/serve.py`) runs Marlin on a GPU machine (Colab notebook, cloud VM, or local workstation with NVIDIA), and SURVEILLANT POSTs base64-encoded snapshots over the network.
+- When the GPU host is unreachable or `MARLIN_HOST = ""`, the system gracefully falls back to `QwenVLOllamaDescriber` so dev iterations always have a working path.
+- Both backends share an abstract `Describer` interface (`modules/llm/describer.py`), so the worker code is backend-agnostic.
+
+### LL-C: Schema — append-only `person_descriptions` table
+
+**Decision:** Option B from the brainstorm — separate `person_descriptions` table with history, denormalised `latest_description_id` pointer on `persons`, durable `description_queue` job table.
+
+Three new SQLite objects:
+
+```sql
+person_descriptions (id, person_id, described_at, backend, model_id,
+                     snapshots_used JSON, attributes JSON, summary, confidence)
+description_queue   (id, person_id, enqueued_at, status, last_error, attempts)
+persons.latest_description_id INTEGER   -- denormalised pointer
+```
+
+**Why append-only:** people change appearance during a session (jacket on/off, picks up a bag). Overwriting destroys evidence that's useful at search time and for the thesis audit trail. The denormalised `latest_description_id` keeps the common-case JOIN fast.
+
+**`merge_persons()` patched** (database.py) to re-point `person_descriptions` from `remove_id` to `keep_id`, inherit the latest pointer if `keep_id` was undescribed, and cancel any pending queue rows for `remove_id`.
+
+### LL-D: Strict-JSON prompt with enum'd attributes
+
+**Decision:** Both backends share the same SYSTEM + USER prompt template (`describer.py:SYSTEM_PROMPT_DESCRIBE` / `USER_PROMPT_DESCRIBE`). 17 fields, most enum-constrained:
+
+| Field group | Examples |
+|---|---|
+| Demographics | `gender`, `age_range`, `body_build`, `height_class` |
+| Hair / face | `hair_color`, `hair_length`, `beard`, `glasses` |
+| Headwear | `headwear`, `headwear_color` |
+| Top / bottom | `clothing_top`, `clothing_top_color`, `clothing_bottom`, `clothing_bottom_color` |
+| Free-text | `accessories` (list), `distinctive_features`, `summary` |
+
+A 13-color palette (`red/blue/green/yellow/black/white/gray/brown/orange/purple/pink/multi/unknown`) is the closed set for any `*_color` field. Values outside the palette are coerced to `unknown` in `_coerce_to_schema()` so SQL filters stay deterministic.
+
+A robust `_clean_json()` helper strips ```json fences, locates `{...}` slices inside surrounding prose, and returns `None` only on unrecoverable malformations (raw text logged for the audit trail).
+
+### LL-E: Background worker — mirrors ReconciliationWorker pattern
+
+**File:** `modules/llm/description_worker.py`
+
+**Pattern lifted directly from `ReconciliationWorker`** so the lifecycle is consistent across the codebase: `_stop_event`, `run_forever()`, per-task try/except → never crash the daemon.
+
+**Loop:**
+1. **Startup recovery** — any `in_progress` rows from a previous run get bumped back to `pending` (durability).
+2. **Drain in-memory hint queue** (non-blocking) — wake up immediately on fresh binds.
+3. **Periodic sweep** every 60 s — `get_persons_without_description()` → `enqueue_description()` so nothing falls through the cracks if the in-memory queue dropped due to backpressure.
+4. **Claim + handle** — `claim_next_description()` atomically marks one pending row `in_progress`, then `_handle()` picks the best snapshot, calls the backend, inserts the result, marks the row `done`.
+5. **Failure path** — `fail_description()` increments attempts; rows that hit `MAX_DESCRIPTION_ATTEMPTS = 3` are marked `failed` with the raw error preserved.
+
+**Snapshot selection** reuses the existing `CropQualityGate` (Part 2) — filters by blur/dimension/brightness, then picks the highest Laplacian-variance crop. Zero new image-quality code.
+
+### LL-F: Producer hook in `main.py` (one line of logic)
+
+In the embedding worker, immediately after the snapshot crops are saved and `track_registry[key] = person_uuid` succeeds with `status_out == "new"`:
+
+```python
+if ENABLE_DESCRIPTION_WORKER and status_out == "new":
+    try:
+        db.enqueue_description(person_uuid)
+        llm_queue.put_nowait({"person_id": person_uuid})
+    except queue.Full:
+        pass   # DB row is enough; sweep will catch it
+```
+
+Producer NEVER blocks. Durability lives in SQLite; the in-memory queue is just a wake-up hint.
+
+### LL-G: Natural-language search — three-stage pipeline
+
+**File:** `modules/search/text_search.py`
+
+1. **`QueryParser.parse(query)`** — text-only Ollama call (`qwen2.5:3b` by default) emits a partial schema dict. Missing fields stay missing; negation lands as `"glasses": "no"`. A rule-based regex fallback runs if Ollama is unreachable.
+2. **Stage 1 — SQL filter** (`db.search_persons_by_attributes`) — enum fields → exact-match via `json_extract`; phrase fields → `LIKE`; accessory lists → OR'd `LIKE`. Returns candidates with attributes denormalised.
+3. **Stage 2 — soft re-rank** — synonym-aware match scoring (`crimson → red`, `hoodie → sweater`, `chubby → heavy`, etc.). Score normalised by # of filter fields the user specified.
+4. **Stage 3 — semantic fallback** — only fires when Stage 1 is empty AND `ENABLE_TEXT_FALLBACK_RERANK = True`. Encodes the query and every stored summary with `sentence-transformers/all-MiniLM-L6-v2`, cosine-ranks. Lazy import so the dependency stays optional.
+
+CLI: `python main.py --phase 4 --search-text "..."` prints ranked results with `person_id`, summary, last-seen-cam/time, snapshot path.
+
+### LL-H: New invariants
+
+Added to `project_invariants.md`:
+
+| # | Rule | Why |
+|---|---|---|
+| 14 | DescriptionWorker NEVER blocks the embedding worker | Producer uses `put_nowait` + durable SQLite row. Even if `queue.Full` raises, the description_queue row already exists and the periodic sweep will pick it up. |
+| 15 | `person_descriptions` rows ACCUMULATE | Never `UPDATE`-overwrite; every describe inserts a new row. `latest_description_id` moves forward. Re-describes preserve history (essential for thesis audit + future "what was this person wearing earlier today?" queries). |
+| 16 | `description_queue.status` transitions are append-only | `pending → in_progress → done | failed`. Never moves backwards. (Exception: startup recovery may reset stuck `in_progress` rows back to `pending` because the previous worker is provably gone.) |
+| 17 | `BODY_MATCH_THRESHOLD` (legacy alias) stays at `BODY_MATCH_THRESHOLD_CROSS_CAM` | Documented previously as invariant #13 in the topology section; reaffirmed here because the LLM PR added another caller that could be tempted to lower it. Phase-3 photo search and any context-less call uses this floor; live identification passes its own override. |
+
+### LL-I: Verification
+
+All checks pass on an in-memory database:
+
+- Schema migrates cleanly (in-memory DB, fresh init, and `_migrate()` path).
+- `enqueue_description` is idempotent — second call with pending row is a no-op.
+- `claim_next_description` returns one row and marks it `in_progress`.
+- `insert_description` + `complete_description` update `latest_description_id` correctly.
+- `fail_description` flips to `failed` after `max_attempts` and preserves `last_error`.
+- `search_persons_by_attributes` returns expected matches on enum, phrase, and accessory filters.
+- `merge_persons` correctly re-points descriptions and inherits when the kept person had no description.
+- `QueryParser._rule_based_fallback` parses gender, build, top color, headwear, glasses, negation correctly (with word-boundary regex — a 0-day bug from the initial implementation where "woman" matched "man" was caught and fixed).
+- `TextSearchEngine.search()` round-trip works end-to-end with a stub describer.
+- All seven new/touched Python files pass `ast.parse()`.
+
+### LL-J: Status
+
+- **`DESCRIPTION_BACKEND = "qwen-vl"`** is the default — works on CPU with no remote host required (assuming `ollama pull qwen2.5vl:2b` and `ollama pull qwen2.5:3b` have been run locally).
+- **Marlin remote host** ships ready-to-deploy in `modules/llm/marlin_server/` with a README covering Colab, cloud VM, and local-GPU deployment.
+- **Phase 4C / 4D deferred** per the locked scope: multi-snapshot consensus, deterministic HSV color sanity-check, re-description on appearance change, hybrid photo+text reranking.
+- Phase 4 CLI:
+  - `python main.py --phase 4 --describe-all` — one-shot describe pass.
+  - `python main.py --phase 4 --search-text "a man in a red t-shirt"` — search.
+  - Both can be combined.
+- During Phase 2 the description worker runs as a daemon — descriptions populate automatically as new persons are bound.
+
+---
+
 ## Reconciliation Worker Improvements
 
 ### RW-A: Mean-pool similarity (Bug D fix)
@@ -424,4 +556,4 @@ When Part 9 (spatio-temporal transition matrix) lands, overlap-group pairs get `
 
 ---
 
-*Last updated: 2026-05-28 — Parts 1–8 and Part 8.5 (overlap-aware matching) complete. Parts 9–10 planned.*
+*Last updated: 2026-05-28 — Parts 1–8.5 + Part 10 (Phase 4A+4B LLM description & NL search) complete. Part 9 (spatio-temporal) and Part 10 (Phase 4C/4D extras) deferred.*

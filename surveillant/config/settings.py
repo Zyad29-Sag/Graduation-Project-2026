@@ -135,7 +135,7 @@ BODY_MATCH_THRESHOLD_CROSS_CAM = 0.68
 #
 # Constraint: groups must be DISJOINT (a camera belongs to at most one
 # room). validate_overlap_topology() enforces this at startup.
-CAMERA_OVERLAP_GROUPS: list[set[int]] = []
+CAMERA_OVERLAP_GROUPS: list[set[int]] = [{3,4}]
 
 # Threshold used when the current cam and the candidate's last_seen_cam
 # are in the same overlap group. Looser than cross-cam (0.68) because
@@ -275,10 +275,55 @@ ENABLE_FAISS = True    # H3 confirmed — FAISS is not the problem; re-enabled.
 FAISS_AUDIT_MODE = False
 
 # ---------------------------------------------------------------------------
-# LLM (Ollama + Qwen2.5-VL)
+# LLM — Body description + natural-language search (Part 10 / Phase 4)
 # ---------------------------------------------------------------------------
-OLLAMA_HOST = "http://localhost:11434"
-LLM_MODEL   = "qwen2.5vl:2b"
+# Two roles, two models (run on different stacks so they can be scaled
+# independently or swapped per deployment):
+#
+#   1. DESCRIBER (image → structured JSON):
+#        - "qwen-vl" backend  → local Ollama, CPU-friendly, default
+#        - "marlin"  backend  → remote GPU host running modules/llm/marlin_server,
+#                               reached over HTTP; Marlin-2B is video-VLM only,
+#                               so this is the only way to use it from a CPU box
+#
+#   2. QUERY PARSER (free text → partial JSON filter):
+#        - always a small text-only LLM via Ollama (fast, deterministic, CPU)
+#
+# Empty MARLIN_HOST + DESCRIPTION_BACKEND="marlin" will fall back to qwen-vl
+# at runtime (with a warning) so the system never deadlocks on a missing
+# remote.
+OLLAMA_HOST                   = "http://localhost:11434"
+
+# Active describer backend. "qwen-vl" (CPU, default) or "marlin" (remote GPU).
+DESCRIPTION_BACKEND           = "qwen-vl"
+
+# Qwen2.5-VL 2B is small enough to describe a cropped person in ~5–15 s
+# on CPU via Ollama. Pull beforehand: `ollama pull qwen2.5vl:2b`.
+OLLAMA_VLM_MODEL              = "qwen2.5vl:2b"
+
+# Query-parsing is text-only (no image) — a small text LLM is sub-second on
+# CPU. Pull beforehand: `ollama pull qwen2.5:3b`.
+OLLAMA_QUERY_MODEL            = "qwen2.5:3b"
+
+# Legacy alias kept for backward compatibility with code that still imports
+# LLM_MODEL. New code should use OLLAMA_VLM_MODEL directly.
+LLM_MODEL                     = OLLAMA_VLM_MODEL
+
+# Marlin remote-host endpoint (only used when DESCRIPTION_BACKEND="marlin").
+# Set to wherever you deployed modules/llm/marlin_server/serve.py.
+# Empty string disables the backend gracefully.
+MARLIN_HOST                   = ""
+MARLIN_TIMEOUT_SEC            = 60
+
+# DescriptionWorker daemon
+ENABLE_DESCRIPTION_WORKER     = True
+DESCRIPTION_QUEUE_MAXSIZE     = 200
+DESCRIPTION_SWEEP_INTERVAL_SEC = 60   # how often to scan persons for missing descriptions
+MAX_DESCRIPTION_ATTEMPTS      = 3     # give up after this many backend failures per person
+
+# TextSearchEngine: optional Stage-3 fallback uses sentence-transformers
+# (all-MiniLM-L6-v2, 22M, CPU-fast). Disable to skip the dependency entirely.
+ENABLE_TEXT_FALLBACK_RERANK   = True
 
 # ---------------------------------------------------------------------------
 # Storage
