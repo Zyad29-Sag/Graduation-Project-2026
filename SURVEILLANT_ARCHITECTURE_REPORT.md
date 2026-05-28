@@ -223,7 +223,7 @@ BODY_MATCH_THRESHOLD = BODY_MATCH_THRESHOLD_CROSS_CAM  # legacy alias / Phase-3 
                                         # (Phase-2 live ID passes overlap floor explicitly)
 
 # Camera topology (Part 8.5) — user-declared overlap groups; empty = feature off
-CAMERA_OVERLAP_GROUPS: list[set[int]] = []   # e.g. [{1, 2}, {4, 5}]
+CAMERA_OVERLAP_GROUPS: list[set[int]] = [{3, 4}]   # WiseNet: cam3↔cam4 share FOV
 
 # Co-visibility boost (Part 8.5, Layer 2) — relax MERGE_CANDIDATE_THRESHOLD for pairs
 # whose camera_history shows repeated lock-step appearances on overlap-partner cams

@@ -365,9 +365,10 @@ When Part 9 (spatio-temporal transition matrix) lands, overlap-group pairs get `
 
 ### OV-E: Status
 
-- `CAMERA_OVERLAP_GROUPS` default is `[]` → behavior unchanged until the user declares topology for their WiseNet layout.
-- All Phase-2 and Phase-3 regressions verified by syntax/import check; integration validated by per-file `ast.parse()` round-trip.
-- Awaiting user-declared topology to produce live `[MATCH:OVERLAP]` / `[RECONCILE:CO-VISIBILITY]` log evidence on WiseNet videos.
+- **WiseNet topology declared (2026-05-28):** `CAMERA_OVERLAP_GROUPS = [{3, 4}]` — cameras 3 and 4 share a physical field of view. Overlap branch is now live for cam3↔cam4 pairs.
+- All Phase-2 and Phase-3 regressions verified by syntax/import check; integration validated by per-file `ast.parse()` round-trip and invariant assertions.
+- Startup validator prints topology summary: `[SURVEILLANT] Overlap topology: 1 group(s) — thresholds same=0.75 overlap=0.62 cross=0.68`.
+- `[MATCH:OVERLAP]` and `[RECONCILE:CO-VISIBILITY]` log lines will appear when cam3 and cam4 share a person sighting.
 
 ---
 
