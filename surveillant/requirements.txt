@@ -18,9 +18,19 @@ SQLAlchemy==2.0.30
 
 # LLM  (Phase 4)
 ollama==0.2.1
+# HTTP client used by the describer + query parser to call the Ollama daemon
+# (/api/chat) and the Marlin remote host. Imported directly in
+# modules/llm/describer.py — pin it so it isn't relied on as a transitive dep.
+requests==2.32.5
 
 # Search  (Phase 3)
 scikit-learn==1.5.0
+
+# Phase 4B Stage-3 fallback (OPTIONAL): semantic re-rank of description
+# summaries when the SQL filter returns no candidates. Heavy (pulls
+# transformers); only needed if ENABLE_TEXT_FALLBACK_RERANK = True. Lazy-
+# imported, so the system runs without it — comment out to skip.
+sentence-transformers==2.7.0
 
 # Utils
 python-dotenv==1.0.1

@@ -10,7 +10,12 @@
       "Bash(python *)",
       "Bash(Get-ChildItem -Path \"D:\\\\college\\\\SURVEILLANT system\\\\surveillant\" -Recurse -Depth 2)",
       "Bash(Select-Object FullName)",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Bash(ollama list *)",
+      "PowerShell(Write-Output \"=== Ollama 127.0.0.1 model list ===\"; try { \\(Invoke-WebRequest \"http://127.0.0.1:11434/api/tags\" -UseBasicParsing\\).Content } catch { $_.Exception.Message })",
+      "Bash(grep -aiE \"OLLAMA_MODELS|OLLAMA_HOST|\\\\\"server config\\\\\"|models dir|listening on\" \"/c/Users/zezoe/AppData/Local/Ollama/server.log\" | tail -20)",
+      "PowerShell(setx OLLAMA_MODELS \"D:\\\\Ollama models\")",
+      "Bash(tail -c 1500 \"/c/Users/zezoe/AppData/Local/Temp/claude/D--college-SURVEILLANT-system/2253cc15-f945-4dea-8b2d-de09af68e82c/tasks/b1w3h1542.output\" | tr '\\\\r' '\\\\n' | grep -aE \"pulling [0-9a-f]|success|verifying|writing|error\" | tail -4)"
     ]
   }
 }

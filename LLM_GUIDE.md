@@ -27,36 +27,35 @@ You should see something like `ollama version 0.3.x`. If not, launch the Ollama 
 
 ---
 
-### Step 2: Pull the two models
+### Step 2: Pull the one model
 
-Open a terminal and run these two commands (you only need to do this once):
+SURVEILLANT uses a **single model** for both jobs — describing people *and*
+parsing your text searches. You only need to download it once:
 
 ```bash
-# The describer — looks at person images and writes JSON descriptions
-ollama pull qwen2.5vl:2b
-
-# The query parser — converts your text search into a structured filter
-ollama pull qwen2.5:3b
+# `ollama run` downloads it (if missing) AND opens an interactive chat so
+# you can eyeball the model once. Type a test line, then Ctrl-D to exit —
+# the model stays cached for SURVEILLANT to use.
+ollama run qwen2.5vl:3b
 ```
 
-**Expected output for each pull:**
-```
-pulling manifest
-pulling ...  100% ████████████ 1.5 GB
-verifying sha256 digest
-writing manifest
-success
-```
+> **Note:** SURVEILLANT does not call `ollama run`/`ollama pull` itself — it
+> talks to the Ollama **daemon** over HTTP and loads the model on demand. The
+> command above just makes sure the model is downloaded and cached. `ollama
+> run` doubles as a quick smoke test.
+>
+> The text-search query parser also uses `qwen2.5vl:3b`, but only as a
+> fallback — an instant rule-based parser handles common queries (gender,
+> build, garment+colour, glasses/beard, accessories, negation) with no model
+> call at all, so most searches return immediately.
 
-`qwen2.5vl:2b` is ~1.5 GB. `qwen2.5:3b` is ~2.0 GB. You need both.
-
-**Verify both models are ready:**
+**Verify the model is ready:**
 
 ```bash
 ollama list
 ```
 
-You should see both `qwen2.5vl:2b` and `qwen2.5:3b` listed.
+You should see `qwen2.5vl:3b` listed.
 
 ---
 
@@ -65,8 +64,9 @@ You should see both `qwen2.5vl:2b` and `qwen2.5:3b` listed.
 Open `surveillant/config/settings.py` and confirm these two lines look like this:
 
 ```python
-DESCRIPTION_BACKEND = "qwen-vl"   # ← this must say "qwen-vl"
-MARLIN_HOST         = ""           # ← this must be empty
+DESCRIPTION_BACKEND = "qwen-vl"      # ← this must say "qwen-vl"
+OLLAMA_VLM_MODEL    = "qwen2.5vl:3b"  # ← the describer model
+MARLIN_HOST         = ""             # ← this must be empty
 ```
 
 This is the **default** — you probably don't need to change anything.
@@ -92,9 +92,9 @@ python main.py --phase 2 --videos data/videos/video1_1.avi data/videos/video1_2.
 As the system detects and identifies people, you will see lines like this in the console:
 
 ```
-[SURVEILLANT] Description worker started (backend=qwen-vl, model=qwen2.5vl:2b).
-[DESCRIBE] person 3a7f91c2 <- A man in a red t-shirt and black jeans (model=qwen2.5vl:2b, 8.3s)
-[DESCRIBE] person b22d04e1 <- A woman in a blue jacket carrying a handbag (model=qwen2.5vl:2b, 11.1s)
+[SURVEILLANT] Description worker started (backend=qwen-vl, model=qwen2.5vl:3b).
+[DESCRIBE] person 3a7f91c2 <- A man in a red t-shirt and black jeans (model=qwen2.5vl:3b, 8.3s)
+[DESCRIBE] person b22d04e1 <- A woman in a blue jacket carrying a handbag (model=qwen2.5vl:3b, 11.1s)
 ```
 
 Each `[DESCRIBE]` line means one person has been described and saved to the database. The number at the end (e.g. `8.3s`) is how long the VLM call took.
@@ -114,10 +114,10 @@ python main.py --phase 4 --describe-all
 **Expected output:**
 
 ```
-[PHASE4] describe-all using backend=qwen-vl model=qwen2.5vl:2b
+[PHASE4] describe-all using backend=qwen-vl model=qwen2.5vl:3b
 [PHASE4] enqueued 47 person(s) for description.
-[DESCRIBE] person 3a7f91c2 <- A man in a red t-shirt and black jeans (model=qwen2.5vl:2b, 8.3s)
-[DESCRIBE] person b22d04e1 <- A woman in a blue jacket carrying a handbag (model=qwen2.5vl:2b, 11.1s)
+[DESCRIBE] person 3a7f91c2 <- A man in a red t-shirt and black jeans (model=qwen2.5vl:3b, 8.3s)
+[DESCRIBE] person b22d04e1 <- A woman in a blue jacket carrying a handbag (model=qwen2.5vl:3b, 11.1s)
 ...
 [PHASE4] described 47 person(s). Stats: {'described': 47, 'failed': 0}
 ```
@@ -247,7 +247,7 @@ MARLIN_HOST         = "https://abc123.ngrok-free.app"   # ← paste your Colab U
 
 Also make sure Ollama is still running (the query parser still uses it):
 ```bash
-ollama list   # should show qwen2.5:3b
+ollama list   # should show qwen2.5vl:3b
 ```
 
 Then run as normal:
@@ -381,7 +381,7 @@ If `model_loaded` is `false`, the server is still loading. Wait 30–60 seconds 
 ## Frequently Asked Questions
 
 **Q: Do I need Ollama even if I use Marlin?**
-Yes. Ollama still runs the text-only query parser (`qwen2.5:3b`) when you use `--search-text`. Only the describer image calls go to Marlin.
+Yes — but only sometimes. The query parser uses the rule-based fast-path for common searches (no model call). When a query needs the LLM, it uses the same `qwen2.5vl:3b` via Ollama. Only the describer image calls go to Marlin.
 
 **Q: How long will `--describe-all` take?**
 Roughly: `(number of persons) × (seconds per description)`. With qwen-vl on CPU: ~10 s/person, so 50 persons ≈ 8 minutes. With Marlin on a T4 GPU: ~5 s/person, so 50 persons ≈ 4 minutes.
@@ -444,8 +444,8 @@ All in `surveillant/config/settings.py`:
 | Setting | Default | What it controls |
 |---|---|---|
 | `DESCRIPTION_BACKEND` | `"qwen-vl"` | `"qwen-vl"` = local Ollama (CPU). `"marlin"` = remote GPU host. |
-| `OLLAMA_VLM_MODEL` | `"qwen2.5vl:2b"` | The Ollama model used to describe images. |
-| `OLLAMA_QUERY_MODEL` | `"qwen2.5:3b"` | The Ollama model used to parse text queries. |
+| `OLLAMA_VLM_MODEL` | `"qwen2.5vl:3b"` | The Ollama model used to describe images. |
+| `OLLAMA_QUERY_MODEL` | `"qwen2.5vl:3b"` | The Ollama model used to parse text queries (fallback only — rules run first). Same model as the describer. |
 | `MARLIN_HOST` | `""` | URL of the Marlin GPU host (e.g. `https://abc.ngrok.app`). Empty = disabled. |
 | `MARLIN_TIMEOUT_SEC` | `60` | Seconds to wait for a Marlin response before failing the job. |
 | `ENABLE_DESCRIPTION_WORKER` | `True` | Set `False` to disable the background worker entirely. |

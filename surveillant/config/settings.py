@@ -292,18 +292,66 @@ FAISS_AUDIT_MODE = False
 # Empty MARLIN_HOST + DESCRIPTION_BACKEND="marlin" will fall back to qwen-vl
 # at runtime (with a warning) so the system never deadlocks on a missing
 # remote.
-OLLAMA_HOST                   = "http://localhost:11434"
+# Use 127.0.0.1 (IPv4) explicitly, NOT "localhost". On Windows "localhost"
+# can resolve to IPv6 ::1 first; if an Ollama server is bound only to IPv4
+# (or a second stray server occupies the IPv6 address with no models), the
+# HTTP call lands on the wrong listener and returns 404 model-not-found.
+OLLAMA_HOST                   = "http://127.0.0.1:11434"
 
 # Active describer backend. "qwen-vl" (CPU, default) or "marlin" (remote GPU).
 DESCRIPTION_BACKEND           = "qwen-vl"
 
-# Qwen2.5-VL 2B is small enough to describe a cropped person in ~5–15 s
-# on CPU via Ollama. Pull beforehand: `ollama pull qwen2.5vl:2b`.
-OLLAMA_VLM_MODEL              = "qwen2.5vl:2b"
+# Describer model. **qwen2.5vl:2b — a NON-reasoning VLM.**
+# History (see DECISION_LOG LL-K → LL-T): we briefly used qwen3-vl:2b, but it
+# is a REASONING model that, when given an image, ALWAYS emits ~1800 internal
+# <think> tokens that CANNOT be disabled (think=False ignored; /no_think
+# ignored for vision inputs) and generates at only ~4.4 tok/s with an image —
+# so every describe took 400–600 s+ and routinely timed out on CPU. qwen2.5vl
+# answers DIRECTLY (no reasoning) in ~20–40 s/person, reliable on CPU.
+# NOTE: Qwen2.5-VL's smallest size is 3B (there is NO 2B — `qwen2.5vl:2b`
+# does not exist on Ollama). Pull beforehand: `ollama pull qwen2.5vl:3b`.
+OLLAMA_VLM_MODEL              = "qwen2.5vl:3b"
 
-# Query-parsing is text-only (no image) — a small text LLM is sub-second on
-# CPU. Pull beforehand: `ollama pull qwen2.5:3b`.
-OLLAMA_QUERY_MODEL            = "qwen2.5:3b"
+# Context window. qwen2.5vl answers directly (no long reasoning trace), so the
+# small 2048 window easily fits the prompt + image + JSON answer. (qwen3-vl
+# needed 8192 only because of its reasoning overflow — not relevant here.)
+OLLAMA_VLM_NUM_CTX           = 2048
+
+# Per-image describe HTTP read timeout (seconds). qwen2.5vl is ~10–30 s/person
+# on CPU; 180 s is generous headroom incl. the one-time cold model load.
+OLLAMA_VLM_TIMEOUT_SEC       = 180
+
+# How long Ollama keeps the model resident in RAM after a call, so a
+# `--describe-all` batch doesn't pay the ~1.5 GB reload cost per person.
+# "30m" keeps it warm for the batch, then frees the RAM. "-1" = never unload.
+OLLAMA_KEEP_ALIVE            = "30m"
+
+# Ollama `think` field. None = do NOT send it (correct for non-reasoning
+# models like qwen2.5vl, which would reject/ignore the flag). Set to False
+# only if you switch back to a reasoning model AND your Ollama build honours
+# it (ours did not for qwen3-vl — see LL-R/LL-T). The describer omits the
+# field entirely when this is None.
+OLLAMA_THINK                 = None
+
+# Describer QUALITY MODE (opt-in). When True the QwenVLOllamaDescriber runs a
+# two-pass pipeline with the SAME model to claw back accuracy without a slow
+# reasoning model:
+#   (#2) a systematic head-to-toe scan instruction is appended to the prompt;
+#   (#1) a second "self-verify" call re-checks the draft against the image -
+#        removing anything not actually visible (anti-hallucination) and adding
+#        anything missed.
+# Cost: ~2 Ollama calls (~30-40 s/person vs ~13-20 s single-pass) - still far
+# cheaper than qwen3-vl thinking (~540 s). Default False keeps the fast path.
+DESCRIBE_QUALITY_MODE        = False
+
+# Query parsing reuses the SAME model as the describer (qwen3-vl:2b) so there
+# is only ONE model to download and keep warm — simpler, no second pull. A
+# vision model handles text-only chat fine. Trade-off: on CPU a query parse
+# now costs ~the same as a describe (~75–110 s) instead of sub-second, BUT the
+# instant rule-based fallback in QueryParser already covers common queries
+# (gender, build, garment+color, glasses/beard, accessories, negation), so
+# most searches don't need the LLM at all.
+OLLAMA_QUERY_MODEL            = "qwen2.5vl:3b"
 
 # Legacy alias kept for backward compatibility with code that still imports
 # LLM_MODEL. New code should use OLLAMA_VLM_MODEL directly.
@@ -316,7 +364,14 @@ MARLIN_HOST                   = ""
 MARLIN_TIMEOUT_SEC            = 60
 
 # DescriptionWorker daemon
-ENABLE_DESCRIPTION_WORKER     = True
+# Run the LLM describer as a background daemon DURING Phase 2 live tracking?
+# False on this CPU-only laptop: qwen3-vl is a reasoning VLM that pins the CPU
+# for ~150–250 s per person, which starves the YOLO detection + OSNet embedding
+# threads and makes live tracking sluggish (observed: weak/laggy boxes). Keep
+# descriptions OUT of the live loop and generate them separately afterwards
+# with `python main.py --phase 4 --describe-all`. Set True only on a machine
+# with spare CPU/RAM (or when using the Marlin GPU backend).
+ENABLE_DESCRIPTION_WORKER     = False
 DESCRIPTION_QUEUE_MAXSIZE     = 200
 DESCRIPTION_SWEEP_INTERVAL_SEC = 60   # how often to scan persons for missing descriptions
 MAX_DESCRIPTION_ATTEMPTS      = 3     # give up after this many backend failures per person

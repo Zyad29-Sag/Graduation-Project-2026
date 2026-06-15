@@ -974,12 +974,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--redescribe-all",
+        action="store_true",
+        help=(
+            "Phase 4 only. Like --describe-all but re-describes EVERY person "
+            "(even already-described ones) with the current prompt/model and "
+            "(re)builds their semantic-search embedding. Use after changing the "
+            "describer prompt or model."
+        ),
+    )
+    parser.add_argument(
         "--search-text",
         type=str,
         metavar="QUERY",
         help=(
-            "Phase 4 only. Natural-language search. Example: "
-            "--search-text \"a fat man with a red t-shirt and white hat\""
+            "Phase 4 only. Natural-language semantic search. Example: "
+            "--search-text \"a man in a black t-shirt\""
         ),
     )
     parser.add_argument(
@@ -1059,23 +1069,29 @@ def resolve_video_set(name_or_path: str) -> list:
 # Phase 4 — LLM description + natural-language search (Part 10)
 # ---------------------------------------------------------------------------
 
-def run_phase4(describe_all: bool, search_text: Optional[str], top_k: int) -> None:
+def run_phase4(
+    describe_all: bool,
+    search_text: Optional[str],
+    top_k: int,
+    redescribe_all: bool = False,
+) -> None:
     """
-    Phase-4 entry point. Two modes:
+    Phase-4 entry point.
 
     --describe-all
-        Walks every person in the DB with no `latest_description_id`,
-        enqueues them, and processes them synchronously through the
-        configured describer backend. Exits when the queue drains.
+        Describe every person that has no description yet.
+
+    --redescribe-all
+        Re-describe EVERY person (even already-described) with the current
+        prompt/model and rebuild their semantic-search embedding. Use after
+        changing the describer prompt or model.
 
     --search-text "QUERY"
-        Parses the query, runs Stage-1 SQL filter + Stage-2 soft rerank
-        (and Stage-3 sentence-transformer fallback if Stage 1 is empty),
-        prints ranked results, and exits.
+        Embed the query and rank stored description embeddings by cosine
+        similarity (semantic / nearest-meaning search). Prints ranked results.
 
-    Both flags can be passed in the same invocation: descriptions are
-    generated first, then the search runs against the freshly-populated
-    DB.
+    Flags can be combined: descriptions are generated first, then the search
+    runs against the freshly-populated DB.
     """
     import queue as _queue
     from modules.storage.database import Database
@@ -1085,18 +1101,22 @@ def run_phase4(describe_all: bool, search_text: Optional[str], top_k: int) -> No
 
     db = Database()
 
-    # 1. --describe-all
-    if describe_all:
+    # 1. --describe-all / --redescribe-all
+    if describe_all or redescribe_all:
         describer = build_describer()
+        mode = "redescribe-all" if redescribe_all else "describe-all"
         print(
-            f"[PHASE4] describe-all using backend={describer.backend_name} "
+            f"[PHASE4] {mode} using backend={describer.backend_name} "
             f"model={describer.model_id}"
         )
-        # Enqueue every person without a description
-        missing = db.get_persons_without_description(limit=10_000)
-        for pid in missing:
+        # redescribe-all → every person; describe-all → only undescribed ones.
+        if redescribe_all:
+            targets = db.get_all_person_ids()
+        else:
+            targets = db.get_persons_without_description(limit=10_000)
+        for pid in targets:
             db.enqueue_description(pid)
-        print(f"[PHASE4] enqueued {len(missing)} person(s) for description.")
+        print(f"[PHASE4] enqueued {len(targets)} person(s) for description.")
 
         # Drain the queue inline (no daemon thread — this is a one-shot).
         worker = DescriptionWorker(describer, db, _queue.Queue())
@@ -1156,16 +1176,18 @@ if __name__ == "__main__":
         run_phase3(args.query)
 
     elif args.phase == 4:
-        # Part 10 — LLM body description + natural-language search.
-        # Either flag (or both) must be present.
-        if not (args.describe_all or args.search_text):
+        # Part 10 — LLM body description + natural-language semantic search.
+        # At least one action flag must be present.
+        if not (args.describe_all or args.redescribe_all or args.search_text):
             parser.error(
-                "Phase 4 requires --describe-all and/or --search-text \"...\""
+                "Phase 4 requires --describe-all, --redescribe-all, "
+                "and/or --search-text \"...\""
             )
         run_phase4(
-            describe_all = args.describe_all,
-            search_text  = args.search_text,
-            top_k        = args.top_k,
+            describe_all   = args.describe_all,
+            redescribe_all = args.redescribe_all,
+            search_text    = args.search_text,
+            top_k          = args.top_k,
         )
 
     else:

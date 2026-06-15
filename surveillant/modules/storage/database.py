@@ -131,6 +131,7 @@ class Database:
                     attributes      TEXT NOT NULL,
                     summary         TEXT,
                     confidence      REAL,
+                    embedding       BLOB,   -- float32 vector of long_description (Phase 4B semantic search)
                     FOREIGN KEY (person_id) REFERENCES persons(person_id)
                 );
 
@@ -174,6 +175,8 @@ class Database:
             "ALTER TABLE person_embeddings ADD COLUMN source_cam INTEGER",
             # Part 10 — Phase 4 LLM description
             "ALTER TABLE persons ADD COLUMN latest_description_id INTEGER",
+            # Phase 4B — semantic search: float32 embedding of long_description
+            "ALTER TABLE person_descriptions ADD COLUMN embedding BLOB",
         ]
         with self._get_conn() as conn:
             for sql in migrations:
@@ -649,21 +652,28 @@ class Database:
         attributes: Dict[str, Any],
         summary: Optional[str],
         confidence: Optional[float] = None,
+        embedding: Optional[bytes] = None,
     ) -> int:
-        """Insert a new description row and return its id."""
+        """
+        Insert a new description row and return its id.
+
+        ``embedding`` is the raw float32 bytes of the long_description vector
+        (Phase 4B semantic search); may be None if the embedder is unavailable.
+        """
         now = datetime.datetime.now().isoformat()
         with self._get_conn() as conn:
             cur = conn.execute(
                 """INSERT INTO person_descriptions
                    (person_id, described_at, backend, model_id,
-                    snapshots_used, attributes, summary, confidence)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    snapshots_used, attributes, summary, confidence, embedding)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     person_id, now, backend, model_id,
                     json.dumps(snapshots_used),
                     json.dumps(attributes),
                     summary,
                     confidence,
+                    embedding,
                 ),
             )
             new_id = cur.lastrowid
@@ -744,8 +754,18 @@ class Database:
             v = filters.get(f)
             if v is None or v == "":
                 continue
-            clauses.append(f"LOWER(json_extract(d.attributes, '$.{f}')) LIKE ?")
-            params.append(f"%{str(v).lower()}%")
+            # Accept a scalar OR a list of synonyms (OR-matched). The search
+            # engine passes a synonym group (e.g. hoodie/sweater/jumper) so a
+            # query term matches whichever surface form the describer stored.
+            items = v if isinstance(v, list) else [v]
+            sub = []
+            for item in items:
+                if item is None or str(item) == "":
+                    continue
+                sub.append(f"LOWER(json_extract(d.attributes, '$.{f}')) LIKE ?")
+                params.append(f"%{str(item).lower()}%")
+            if sub:
+                clauses.append("(" + " OR ".join(sub) + ")")
         for f in list_fields:
             v = filters.get(f)
             if not v:
@@ -796,15 +816,17 @@ class Database:
 
     def get_all_summaries(self) -> List[Dict[str, Any]]:
         """
-        Return (person_id, summary, snapshot_paths, last_seen_*) for every
-        person with at least one description — used by the Stage-3 text
-        fallback in TextSearchEngine.
+        Return the latest description per person (with its stored embedding) for
+        semantic search. Each item: person_id, last_seen_*, snapshot_paths,
+        summary (== long_description), attributes, embedding (raw float32 bytes
+        or None), desc_id.
         """
         with self._get_conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT p.person_id, p.last_seen_cam, p.last_seen_time, "
-                "       p.snapshot_paths, d.summary, d.attributes, d.id AS desc_id "
+                "       p.snapshot_paths, d.summary, d.attributes, d.embedding, "
+                "       d.id AS desc_id "
                 "FROM persons p "
                 "INNER JOIN person_descriptions d ON p.latest_description_id = d.id "
                 "WHERE d.summary IS NOT NULL"
@@ -826,9 +848,16 @@ class Database:
                 "snapshot_paths": snaps,
                 "summary":        row["summary"],
                 "attributes":     attrs,
+                "embedding":      row["embedding"],   # raw bytes or None
                 "desc_id":        row["desc_id"],
             })
         return out
+
+    def get_all_person_ids(self) -> List[str]:
+        """Return every person_id (used by --redescribe-all to re-enqueue all)."""
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT person_id FROM persons").fetchall()
+        return [r[0] for r in rows]
 
     # ------------------------------------------------------------------
     # Public API — Merge Proposals

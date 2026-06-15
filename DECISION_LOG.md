@@ -375,6 +375,145 @@ When Part 9 (spatio-temporal transition matrix) lands, overlap-group pairs get `
 
 ## Part 10 (Phase 4A + 4B) — LLM Body Description + Natural-Language Search
 
+### LL-Y: Describer "quality mode" (2-pass) — implemented, benchmarked, kept OFF (2026-06-14)
+**What:** Added opt-in `DESCRIBE_QUALITY_MODE` (default False). When on, `QwenVLOllamaDescriber` runs a 2-pass pipeline with the SAME model: (#2) a head-to-toe `SCAN_ADDENDUM` appended to the describe prompt, and (#1) a `SYSTEM_PROMPT_VERIFY` self-verification call that re-checks the draft against the image. Refactored the HTTP call into `_post_chat()` for reuse.
+**Why:** User asked whether a "skill" (prompt/pipeline technique) could get better results from qwen2.5vl:3b without the 540 s thinking cost.
+**Benchmark (3 people, warm model):**
+
+| Person | single-pass | quality mode |
+|---|---|---|
+| b02148df | 8 keys, ~15 s | 7 keys, ~25 s (missed same beanie) |
+| d65c54d4 | 6 keys, 12 s | 9 keys, 34 s (+"shirt underneath", −"dark pants") |
+| ea573f4f | 8 keys, 13 s | 9 keys, 139 s (+"holding object", −"beard") |
+
+**Finding:** the self-verify pass (#1) does NOT reliably improve quality — a 3B model can't critique itself, so the second pass behaves like an independent re-sample: it adds ~1–3 structured keys but DROPS other correct facts, at 2–10× the latency (high variance). The systematic scan (#2) is harmless and modestly more thorough. The beanie that thinking-mode caught was missed by both passes → a perception/resolution limit, not a verification gap.
+**Decision:** keep `DESCRIBE_QUALITY_MODE = False` (default). The feature ships behind the flag for experimentation but is NOT recommended on. The higher-value "same-model" levers are input-side: #3 upscale small crops (so the vision encoder can resolve small items) and #4 deterministic HSV colour sanity-check (anti-hallucination from pixels, not LLM self-critique). Honest negative result recorded so it isn't re-attempted blindly.
+
+### LL-X: Thinking-mode benchmark — qwen2.5vl:3b vs qwen3-vl:2b (2026-06-14)
+**What:** Head-to-head on the same crop + same prompt, measuring time and description quality with reasoning OFF vs ON.
+
+| | qwen2.5vl:3b (no-think) | qwen3-vl:2b (thinking on) |
+|---|---|---|
+| Time / person (CPU) | **13 s** | **540 s (~9 min)** |
+| Internal `<think>` chars | 0 | 11,284 |
+| Structured keys | 6 | 11 |
+| Detail | good | better — caught a dark beanie the 2.5 model missed; read the partial logo literally ("NOT DO" = visible fragment of "JUST DO IT") rather than auto-completing it; added hair/headwear/bottom-colour |
+
+**Why run it:** user asked to see the quality-vs-time difference of thinking mode.
+**Finding:** reasoning genuinely improves description completeness and faithfulness (more accurate, less auto-completion), but at ~41× the latency — 540 s/person is impractical on this CPU (a full gallery = hours). **Decision: stay on qwen2.5vl:3b for CPU; thinking mode (qwen3-vl) is only viable on the GPU/Marlin backend, where the reasoning runs in seconds.** To try it manually: set `OLLAMA_VLM_MODEL="qwen3-vl:2b"`, `OLLAMA_VLM_NUM_CTX=8192`, `OLLAMA_THINK=None` (thinking on by default), `OLLAMA_VLM_TIMEOUT_SEC>=700`, then `--redescribe-all`.
+
+### LL-W: Describer prompt tuning — reliable long_description + thorough structured keys (2026-06-14)
+**What:** Two prompt refinements to `USER_PROMPT_DESCRIBE`:
+1. Added a concrete few-shot JSON **example** (with `long_description` first). Before this, qwen2.5vl under `format=json` filled the enumerated structured keys but SKIPPED the free-text `long_description`, so `_clean_flexible` fell back to a synthesised "gender: male; …" string. The example made the model emit a real `long_description` reliably.
+2. Added an explicit **thoroughness instruction**: "for EVERY feature you mention in long_description that you are sure about, add its structured key (e.g. 'light blue Nike t-shirt' → clothing_top='t-shirt', clothing_top_color='blue')." Before this, the model wrote rich prose but extracted only 3–5 sparse keys (e.g. described a Nike t-shirt but omitted clothing_top). After: 5–9 keys per person, mirroring the description, while still OMITTING anything not visible.
+**Why:** User wanted BOTH a rich `long_description` AND a complete set of confident key/value features — not one at the expense of the other.
+**Result/Status:** Verified — descriptions now carry a detailed long_description plus 5–9 structured keys; the anti-hallucination omission rule still holds (uncertain/invisible keys absent). Re-indexed via `--redescribe-all`. (Residual: the 3B model occasionally still mentions a non-visible item in the prose — a small-model adherence limit, not a schema bug.)
+
+### LL-V: Phase 4B redesign — flexible anti-hallucination describer + semantic search (2026-06-14)
+**What:** Reworked description generation and search around two user-driven principles: (1) the describer must only state what it is sure it can SEE, and (2) search must match by MEANING, not SQL keywords.
+
+**Describer — flexible, honest schema** (`modules/llm/describer.py`):
+- New strict-but-flexible prompt: the model returns a required `long_description` (rich free text of only what's visible) PLUS any structured keys it is *confident* about (`gender`, `clothing_top/color`, `clothing_bottom/color` only if the lower body is visible, `hair_*`, `glasses`, `headwear`, `accessories`). It is told to OMIT any key it cannot see — never to guess.
+- Replaced `_coerce_to_schema()` (which force-filled all 17 fields with `"unknown"`) with `_clean_flexible()` which keeps ONLY the keys returned and drops empty/uncertain values (`_UNCERTAIN_VALUES`). No invented attributes.
+- **Why:** the old rigid 17-field schema forced hallucination — a face-only crop was labelled "brown pants" though no legs were visible. Honesty + omission is now required.
+
+**Search — semantic embeddings, not LIKE** (`modules/search/text_embedder.py` NEW, `text_search.py` rewritten, `database.py`):
+- New `text_embedder.py`: one lazily-loaded `all-MiniLM-L6-v2` shared by describe and search; L2-normalised float32.
+- At describe time the worker embeds `long_description` and stores the vector in a new `person_descriptions.embedding BLOB` column (schema + `_migrate` ALTER; `insert_description(embedding=...)`).
+- `TextSearchEngine.search()` now embeds the query and cosine-ranks all stored vectors → nearest meaning. The QueryParser + Stage-1 SQL `LIKE` filter + Stage-2 synonym table + Stage-3 fallback are all GONE (one clean semantic path).
+- **Why:** SQL `LIKE` keyword matching was brittle (the hoodie/sweater asymmetry, "black t-shirt" → 0 results). Embeddings handle synonyms/paraphrase/partial wording with no hand-curated tables.
+
+**Re-indexing:** new `--redescribe-all` CLI flag (+ `db.get_all_person_ids()`) re-describes every person with the current prompt/model and rebuilds embeddings — needed after a prompt/model change. Existing rows without an embedding are skipped by search with a printed hint.
+
+**Old approach:** rigid 17-field "unknown"-filled JSON + parse→SQL-LIKE→synonym→ST-fallback search.
+**New approach:** flexible visible-only JSON + `long_description` + pure cosine semantic search over stored MiniLM embeddings.
+**Result/Status:** verified `_clean_flexible` drops uncertain keys (e.g. `clothing_bottom:'unknown'` omitted). Re-describe + semantic search validated end-to-end (see below). `sentence-transformers` is now a hard dependency of search (already in requirements.txt).
+
+### LL-U: Search refinements — synonym-symmetric Stage 1 + Stage-3 enabled (2026-06-14)
+**What:** (a) Fixed a synonym asymmetry in `TextSearchEngine`: query phrase terms are now expanded to their full synonym group and OR-matched in Stage-1 SQL. New `_SYNONYM_GROUPS` reverse index + `_synonym_group()` + `_expand_for_db()` in `text_search.py`; `database.search_persons_by_attributes()` phrase-field branch generalised to accept a list (OR of LIKEs). (b) Installed `sentence-transformers` so the Stage-3 semantic fallback actually runs.
+**Why:** A search for "black hoodie" matched the black *sweater* but MISSED a person literally stored as "black hoodie", because the query canonicalised `hoodie→sweater` while the describer stored the literal `hoodie` — the LIKE filter was asymmetric. Separately, near-miss queries (e.g. "black t-shirt" when only a gray t-shirt exists) returned `(no matches)` because Stage 3 (`sentence-transformers`) wasn't installed.
+**Old approach:** Stage 1 matched a single canonical token; Stage 3 disabled (import error).
+**New approach:** Stage 1 OR-matches the whole synonym group (symmetric — "hoodie" and "sweater" both find either stored form); Stage 3 lazily loads `all-MiniLM-L6-v2` and cosine-ranks all summaries when Stage 1 is empty.
+**Result/Status:** Verified — "black hoodie" returns both hoodie+sweater people; "black t-shirt" returns 5 nearest people ranked (t-shirt person #1 at 0.53). Colour/enum fields needed no change (already coerced to the palette on storage, so exact match is symmetric). `sentence-transformers` was already pinned in requirements.txt.
+
+### LL-T: Switch describer to qwen2.5vl:3b (non-reasoning) — qwen3-vl unusable on CPU (2026-06-14)
+**What:** Changed `OLLAMA_VLM_MODEL` and `OLLAMA_QUERY_MODEL` from `qwen3-vl:2b` to **`qwen2.5vl:3b`**; reverted `OLLAMA_VLM_NUM_CTX` 8192→2048 and `OLLAMA_VLM_TIMEOUT_SEC` 600→180; set `OLLAMA_THINK = None` and made `describer.py` OMIT the `think` field when None (non-reasoning models reject it).
+**Why:** Exhaustive testing proved qwen3-vl:2b cannot describe images acceptably on this CPU-only laptop, and it is NOT a config/prompt/integration bug:
+  - Raw CPU speed is fine: **19 tok/s** on text.
+  - But qwen3-vl ALWAYS emits ~1800 internal `<think>` tokens when given an image, and that reasoning is **undisableable** on this Ollama build (0.30.7): `think=False` ignored; `/no_think` works for text but is **ignored for vision inputs** (verified — thinking still 1600+ tokens).
+  - WITH an image, generation drops to **~4.4 tok/s** (vision layers), so ~1800 reasoning tokens ⇒ **400 s+ per describe**, often >600 s when reasoning rambles to fill context → timeouts.
+  - There is no `num_ctx`/timeout/prompt value that fixes a model that mandatorily reasons for minutes per image on CPU.
+**Old approach:** qwen3-vl:2b (reasoning) + the num_ctx=8192/timeout=600 band-aids (LL-R) that made it *reliable* but ~150–600 s/person and fragile under RAM pressure.
+**New approach:** qwen2.5vl:3b — a NON-reasoning VLM (Qwen2.5-VL's smallest size; there is no 2B — `qwen2.5vl:2b` 404s on Ollama). Answers directly in ~20–40 s/person, fits num_ctx=2048, low RAM, deterministic. User chose this (over GPU/Marlin) after seeing the evidence.
+**Result/Status:** Model downloading (~3.2 GB). All the prior fixes remain valid and necessary (D:\Ollama models store LL-Q; 127.0.0.1 LL-L; lean Phase 2 LL-S). The `think`-handling is now conditional so the codebase supports both reasoning and non-reasoning backends. **Lesson:** for CPU-only structured-output VLM work, pick a NON-reasoning model; reasoning VLMs need a GPU.
+
+### LL-S: Decouple describer from Phase 2 — ENABLE_DESCRIPTION_WORKER=False (2026-06-14)
+**What:** Set `ENABLE_DESCRIPTION_WORKER = False` in `config/settings.py`. Phase 2 no longer starts the DescriptionWorker daemon or enqueues describe jobs during live tracking (both already gated on this flag in `main.py:364` and `:752`). Descriptions are generated on demand via `python main.py --phase 4 --describe-all`.
+**Why:** User reported Phase 2 became slow/weak — boxes laggy and less accurate than before. Detection/tracking CODE is unchanged, so the regression is CPU contention. With qwen3-vl now confirmed to pin the CPU for ~150–250 s per person (reasoning model, LL-R), running the describer as a live daemon starves the round-robin YOLO detector and the OSNet embedding worker on this 8-core CPU-only laptop. Decoupling restores live-tracking performance; descriptions are a post-process step anyway.
+**Old approach:** `ENABLE_DESCRIPTION_WORKER = True` — describer ran during Phase 2, competing for CPU.
+**New approach:** `False` — Phase 2 runs lean; describe in a separate Phase-4 pass (ideally with other apps closed to free RAM).
+**Result/Status:** Phase 2 detection/tracking no longer competes with the VLM. User chose to keep qwen3-vl on CPU (accepting ~150–250 s/person and the need to free RAM); this change makes that viable by keeping the cost out of the live loop.
+
+### LL-R: The REAL describe fix — num_ctx=8192 for qwen3 reasoning overflow (2026-06-14)
+**What:** Added `OLLAMA_VLM_NUM_CTX = 8192` (was a hardcoded `num_ctx=2048`) and raised `OLLAMA_VLM_TIMEOUT_SEC` 300→600 in `config/settings.py`; both Ollama payloads in `describer.py` now use `OLLAMA_VLM_NUM_CTX`.
+**Why (corrects LL-P):** After fixing the Ollama store (LL-Q), describes STILL returned empty (`len(content)=0`) — but now with `done=length` and a populated `thinking` field of ~2000–2200 chars. Root cause: **qwen3-vl reasons for ~2000 tokens before answering, and at `num_ctx=2048` that reasoning fills the entire context window, so the model hits the length limit before emitting any JSON.** Critically, `think=False` AND the Qwen `/no_think` directive were BOTH ignored on this Ollama build (0.30.7) — thinking could not be disabled, only accommodated. The earlier LL-P "fix" only worked intermittently because some runs happened to think <2048 tokens and squeaked under the limit. Verified: at `num_ctx=8192`, two consecutive runs both returned valid JSON (`done=stop`, parseable), e.g. *"A bald man wearing a black t-shirt and shorts, seated…"*.
+**Old approach:** `num_ctx=2048` → reasoning overflow → empty content / `done=length`.
+**New approach:** `num_ctx=8192` gives room for the full reasoning trace PLUS the answer → deterministic `done=stop`. `think=False` (LL-P) is kept — harmless, and may shorten reasoning on builds that honor it.
+**Result/Status:** Describe is now deterministic but slow on CPU (~150–250 s/person — the model generates ~2000+ tokens). Timeout raised to 600 s to cover it. This is the inherent cost of a reasoning VLM on CPU; the Marlin GPU backend is the path for larger galleries. **Lesson:** for reasoning models used with `format=json`, size `num_ctx` for (reasoning + answer), not just the prompt.
+
+### LL-Q: Ollama model-store mismatch — describer got 404 / "backend returned None" (2026-06-14)
+**What:** Operational/environment fix (no SURVEILLANT code change). The describer intermittently failed for every person with `404 Not Found` or `backend returned None`, while the monitoring dashboard showed only the early-described persons succeeding.
+**Why:** The Ollama **desktop app** is configured (in its own `db.sqlite`, NOT an env var — invisible to User/Machine env queries) to store models in **`D:\Ollama models`** and bind `OLLAMA_HOST=http://0.0.0.0:11434`. But `qwen3-vl:2b` had been pulled with the **CLI**, which defaulted to `C:\Users\zezoe\.ollama\models`. So the app's auto-started server looked in `D:\Ollama models`, found no models, and returned empty/404 for every `/api/chat`. The earlier "two servers / IPv4 vs IPv6" confusion was a side-effect of a transient manual `ollama serve`; the real, durable cause was the **store-location split**. The "only the 2 stationary people got described" pattern was pure timing coincidence (they were described during a brief window when a correct server was up), not anything about motion or angle — confirmed because the failed persons had 12–16 crops that ALL passed the quality gate.
+**Old state:** model in `C:\…\.ollama\models`; app server reading empty `D:\Ollama models`.
+**New state:** merged the local store into `D:\Ollama models` (robocopy, no re-download) so the app's own server finds the model; set persistent `OLLAMA_MODELS=D:\Ollama models` so future CLI pulls land where the app looks. App server now serves `qwen3-vl:2b` on `0.0.0.0:11434` (reachable via `127.0.0.1`).
+**Result/Status:** Permanent — survives reboot/app-restart because the model lives in the app's configured store. Diagnostic lesson: when Ollama returns 404/empty despite `ollama list` showing a model, check the **server log** `msg="server config"` line for the actual `OLLAMA_MODELS` path the running server uses.
+
+### LL-P: Disable qwen3 reasoning — the real cause of empty/timeout describes (2026-05-29)
+**What:** Added `OLLAMA_THINK = False` to `config/settings.py` and set `"think": OLLAMA_THINK` on both Ollama `/api/chat` payloads (describer + query parser `_llm_parse`).
+**Why:** `--describe-all` kept failing with `JSON parse failed; raw=''` (empty content) and 300 s read timeouts, even with RAM free and the model resident. Systematic debugging:
+  - Same crop, **short 4-field prompt → valid JSON in 10 s**; **full 17-field prompt → empty after 151 s**. So not RAM, not context size (image is ~150 tokens, num_ctx 2048 is ample), not the crop.
+  - Capping `num_predict=400` returned `done_reason=length, eval_count=400, len(content)=0` — i.e. the model generated 400 tokens but emitted **none of them as content**.
+  - Inspecting the response showed a populated `message.thinking` field: **qwen3-vl is a hybrid reasoning model.** Left on, it spends its token budget on an internal `<think>` monologue and, under `format=json`, never produces the JSON answer in `message.content` → empty (or times out while still "thinking"). The complex prompt triggered far more reasoning than the simple one, which is why some persons succeeded and 6a587517 always failed.
+  - Setting `think=False`: the **full prompt returned complete valid 17-field JSON, `done=stop`, in ~45 s.**
+**Old approach:** No `think` field → Ollama defaulted qwen3-vl to thinking-on → empty content / timeouts.
+**New approach:** `think=False` forces a direct answer. Documented, config-driven; plain non-reasoning VLMs ignore the flag, so it's safe across backends.
+**Result/Status:** Describe is now reliable (~45 s/person on this CPU). This — not the timeout (LL-M) or keep_alive (LL-N) — was the true blocker; those remain valid hardening. Lesson for any future qwen3/reasoning model: pass `think=False` when you need structured output.
+
+### LL-O: Unify on one model — query parser reuses qwen3-vl:2b, rules-first (2026-05-29)
+**What:** Changed `OLLAMA_QUERY_MODEL` from `qwen2.5:3b` to `qwen3-vl:2b` (same model as the describer) and reordered `QueryParser.parse()` to run the instant rule-based parser FIRST, calling the LLM only when the rules extract nothing. Extracted the LLM call into `QueryParser._llm_parse()` (returns `None` on failure). Updated `LLM_GUIDE.md` (one model to pull), `SURVEILLANT_ARCHITECTURE_REPORT.md`, and memory.
+**Why:** User request — avoid downloading/managing a second model and keep the setup simple. One model for both roles is simpler to install and keep warm. Consequence handled: qwen3-vl:2b is a slow vision model (~75–110 s/call on this CPU), so calling it on every search (the old LLM-first order) would make every `--search-text` hang. The rule-based parser already covers the documented operator vocabulary (gender, build, garment+colour, headwear, glasses/beard, accessories, negation) instantly, so rules-first keeps search fast and only pays for the LLM on unusual phrasings.
+**Old approach:** Separate `qwen2.5:3b` text model; `parse()` called the LLM first, rule-based only as a failure fallback.
+**New approach:** Single `qwen3-vl:2b`; `parse()` = rules-first, LLM-fallback. `_llm_parse()` carries `keep_alive` and the longer `OLLAMA_VLM_TIMEOUT_SEC` like the describer.
+**Result/Status:** Common searches return immediately with no model call; only rare queries load the VLM. One fewer model to download. Behaviour for the documented search examples is unchanged (rules already matched them).
+
+### LL-N: keep_alive to stop model reloading under RAM pressure (2026-05-29)
+**What:** Added `OLLAMA_KEEP_ALIVE = "30m"` to `config/settings.py` and set `keep_alive` on the describer's `/api/chat` payload.
+**Why:** Even at the 300 s timeout (LL-M), `--describe-all` still timed out on most persons while one finished in 74.8 s — a 4× latency variance that indicates resource contention, not steady slowness. Diagnosis: the machine has 16 GB RAM but only ~3 GB free (Chrome ~3 GB, Antigravity IDE ~1 GB, Edge WebView ~1 GB, Claude ~1 GB). qwen3-vl:2b needs ~2 GB weights + vision-encoder activations, so loading it forces Windows to page to disk; under swap, a single describe can exceed even 300 s. GPU is Intel Iris Xe (integrated) — stock Ollama on Windows can't use it, so inference is unavoidably CPU-only.
+**Old approach:** No `keep_alive`; Ollama's default 5-min unload meant a slow/swapping batch could unload the model between persons and re-pay the ~2 GB load each time, compounding the problem.
+**New approach:** `keep_alive = "30m"` keeps the model resident for the whole sequential backfill, then frees the RAM. Primary mitigation remains operational: free host RAM (close Chrome/IDE) so the resident model doesn't get paged out mid-inference.
+**Result/Status:** With ~6+ GB free, per-person time should stabilise at ~75–110 s. keep_alive avoids reload cost; it cannot prevent the OS paging out a resident model under genuine memory starvation — hence the RAM-freeing guidance. For large galleries, the Marlin GPU backend remains the scalable path.
+
+### LL-M: Raise describer HTTP timeout — qwen3-vl:2b is slow on CPU (2026-05-29)
+**What:** Added `OLLAMA_VLM_TIMEOUT_SEC = 300` to `config/settings.py` and wired it as the default `timeout_sec` for `QwenVLOllamaDescriber` (was a hardcoded `120`).
+**Why:** After the 404 fix (LL-L), `--describe-all` reached the model and described one person in **111.9 s**, but the others failed with `Read timed out (read timeout=120)`. On this CPU, qwen3-vl:2b takes ~90–130 s per crop (vision encoder dominates) and the first call also pays a one-time model-load cost, so the 120 s read timeout was marginally too tight.
+**Old approach:** `timeout_sec: int = 120` hardcoded in `QwenVLOllamaDescriber.__init__` (also a magic-number violation of WORKING_INSTRUCTIONS §5).
+**New approach:** Config-driven `OLLAMA_VLM_TIMEOUT_SEC = 300` — generous headroom for slow CPU inference without hanging indefinitely on a dead backend. Failed rows are retried by the sweep up to `MAX_DESCRIPTION_ATTEMPTS`, so a one-off slow call self-heals.
+**Result/Status:** Describe pass completes on CPU. ~2 min/person means a 4-person backfill ≈ 8 min; consider the Marlin GPU backend for larger galleries.
+
+### LL-L: Fix Ollama 404 — use 127.0.0.1 instead of localhost (2026-05-29)
+**What:** Changed `OLLAMA_HOST` in `config/settings.py` (and `.env.example`) from `http://localhost:11434` to `http://127.0.0.1:11434`.
+**Why:** `--describe-all` failed with `404 Client Error: Not Found for url: http://localhost:11434/api/chat` for every person, even though `ollama list` showed `qwen3-vl:2b` present. Diagnosis: two `ollama serve` processes were bound to port 11434 — one on IPv4 `127.0.0.1` (had the model) and one on IPv6 `::` (empty model list). On Windows, `localhost` resolves to IPv6 `::1` first, so the app's HTTP call landed on the empty server and Ollama returned 404 model-not-found. `ollama list` worked because the CLI used the IPv4 listener. Confirmed: `GET http://127.0.0.1:11434/api/tags` returned the model; `GET http://[::1]:11434/api/tags` returned `{"models":[]}`.
+**Old approach:** `OLLAMA_HOST = "http://localhost:11434"`.
+**New approach:** `OLLAMA_HOST = "http://127.0.0.1:11434"` — forces IPv4, sidesteps the localhost→IPv6 ambiguity. Independent of the stray-server cleanup; correct default regardless.
+**Result/Status:** Describer and query parser now reach the model-bearing server. Recommended hygiene: ensure only ONE Ollama server runs (quit duplicate `ollama serve` instances) so the IPv4/IPv6 split can't recur.
+
+### LL-K: Describer model upgraded qwen2.5vl:2b → qwen3-vl:2b (2026-05-29)
+**What:** Changed the default local describer model from `qwen2.5vl:2b` to `qwen3-vl:2b` in `config/settings.py` (`OLLAMA_VLM_MODEL`). Updated docstrings in `modules/llm/describer.py`, the setup guide `LLM_GUIDE.md`, and the current-config snapshot in `SURVEILLANT_ARCHITECTURE_REPORT.md`.
+**Why:** Qwen3-VL is the newer generation; at the same 2B size it follows instructions and emits structured output more reliably, which directly benefits the strict 17-field JSON description schema. No architecture change — the prompts, schema, `Describer` ABC, and both backends are model-agnostic, so this is a single-constant swap that the default param `model=OLLAMA_VLM_MODEL` propagates automatically.
+**Old approach:** `OLLAMA_VLM_MODEL = "qwen2.5vl:2b"`; setup docs instructed `ollama pull qwen2.5vl:2b`.
+**New approach:** `OLLAMA_VLM_MODEL = "qwen3-vl:2b"`; setup docs instruct `ollama run qwen3-vl:2b` (downloads if missing + doubles as an interactive smoke test; SURVEILLANT itself reaches the model via the Ollama HTTP daemon, not the CLI). The text-only query parser is unchanged (`qwen2.5:3b`).
+**Result/Status:** Same ~5–15 s/person on CPU (still a 2B model — quality gain, not speed). Verify the tag with `ollama list` after first run. Marlin remote backend unaffected.
+
 ### LL-A: Problem statement (2026-05-28)
 
 **What:** Parts 1–8.5 give a stable `person_id` and a multi-view body gallery for each person, which makes "is this the same person?" queries work but leaves the system blind to semantics — "find a man in a red t-shirt and white hat" cannot be answered because the database stores embedding vectors, not appearance attributes.
@@ -493,7 +632,7 @@ All checks pass on an in-memory database:
 
 ### LL-J: Status
 
-- **`DESCRIPTION_BACKEND = "qwen-vl"`** is the default — works on CPU with no remote host required (assuming `ollama pull qwen2.5vl:2b` and `ollama pull qwen2.5:3b` have been run locally).
+- **`DESCRIPTION_BACKEND = "qwen-vl"`** is the default — works on CPU with no remote host required (assuming `ollama run qwen3-vl:2b` and `ollama pull qwen2.5:3b` have been run locally; see LL-K for the model upgrade).
 - **Marlin remote host** ships ready-to-deploy in `modules/llm/marlin_server/` with a README covering Colab, cloud VM, and local-GPU deployment.
 - **Phase 4C / 4D deferred** per the locked scope: multi-snapshot consensus, deterministic HSV color sanity-check, re-description on appearance change, hybrid photo+text reranking.
 - Phase 4 CLI:

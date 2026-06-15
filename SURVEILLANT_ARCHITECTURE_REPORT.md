@@ -38,8 +38,10 @@ Four dedicated thread domains eliminate CPU starvation:
    - Daemon thread mirroring the ReconciliationWorker pattern (`_stop_event`, per-task try/except, never crashes).
    - Consumes a bounded in-memory `llm_queue` (wake-up hints from the embedding worker) plus a durable `description_queue` SQLite table (survives restarts).
    - Loop: drain hint → periodic sweep for persons with NULL `latest_description_id` → `claim_next_description()` atomic claim → pick the sharpest snapshot through `CropQualityGate` → call the configured `Describer` backend → write structured JSON to `person_descriptions` → set `persons.latest_description_id`.
-   - **Two backends behind one ABC:** `QwenVLOllamaDescriber` (CPU, local Ollama, default) and `MarlinRemoteDescriber` (POSTs base64 snapshots to a remote GPU host running `modules/llm/marlin_server/serve.py`). Selected via `DESCRIPTION_BACKEND` config flag.
-   - **Re-describe-safe:** rows accumulate; the latest pointer moves forward. Merges re-point all description rows from the removed person to the kept person inside the same transaction.
+   - **Two backends behind one ABC:** `QwenVLOllamaDescriber` (CPU, local Ollama, default `qwen2.5vl:3b` — non-reasoning) and `MarlinRemoteDescriber` (POSTs base64 snapshots to a remote GPU host). Selected via `DESCRIPTION_BACKEND` config flag.
+   - **Flexible, anti-hallucination output (Phase 4B v2, LL-V):** the prompt asks for a rich `long_description` of only what is visible, plus structured keys ONLY when the model is confident — uncertain/invisible attributes are OMITTED (no hallucinated "brown pants" for a face-only crop). `_clean_flexible()` keeps only returned keys and drops uncertain values.
+   - **Semantic-search indexing:** the worker embeds each `long_description` with `all-MiniLM-L6-v2` (`modules/search/text_embedder.py`) and stores the float32 vector in `person_descriptions.embedding`. Search is cosine-similarity over these vectors — no SQL keyword matching.
+   - **Re-describe-safe:** rows accumulate; the latest pointer moves forward. `--redescribe-all` regenerates descriptions + embeddings after a prompt/model change. Merges re-point all description rows from the removed person to the kept person inside the same transaction.
 
 ---
 
@@ -240,8 +242,8 @@ MERGE_CANDIDATE_THRESHOLD_OVERLAP_BOOSTED  = 0.45
 
 # LLM body description + natural-language search (Part 10 / Phase 4)
 DESCRIPTION_BACKEND                = "qwen-vl"   # or "marlin"
-OLLAMA_VLM_MODEL                   = "qwen2.5vl:2b"   # describer (image -> JSON)
-OLLAMA_QUERY_MODEL                 = "qwen2.5:3b"     # query parser (text -> JSON)
+OLLAMA_VLM_MODEL                   = "qwen2.5vl:3b"    # describer (image -> JSON)
+OLLAMA_QUERY_MODEL                 = "qwen2.5vl:3b"    # query parser (text -> JSON); same model as describer, LLM is fallback-only
 MARLIN_HOST                        = ""               # http://gpu-host:8000 when used
 ENABLE_DESCRIPTION_WORKER          = True
 DESCRIPTION_QUEUE_MAXSIZE          = 200
@@ -324,7 +326,7 @@ graph TD;
     Q --> R[DescriptionWorker daemon];
     R --> R1[Pick sharpest snapshot<br/>via CropQualityGate];
     R1 --> R2{Describer backend};
-    R2 -- qwen-vl --> R3[Ollama qwen2.5vl:2b<br/>local CPU];
+    R2 -- qwen-vl --> R3[Ollama qwen2.5vl:3b<br/>local CPU];
     R2 -- marlin --> R4[Marlin-2B remote GPU<br/>HTTP /describe];
     R3 --> R5[INSERT person_descriptions<br/>UPDATE latest_description_id];
     R4 --> R5;
@@ -352,7 +354,7 @@ The dashed-equivalent path: if FAISS is unavailable, **LF** is replaced by a lin
 | 11 | **Gallery-sponge regression fix**: FAISS was innocent (H3 confirmed). Root cause: `BODY_MATCH_THRESHOLD = 0.65` was inside the different-person score range for WiseNet (~0.65–0.70). Fix 1: raised threshold to 0.72. Fix 2: `FORCE_ACCEPT_MAX_DISTANCE = 0.35` replaces the loose `GALLERY_MAX_DISTANCE = 0.55` guard on canonical-slot force-accept. |
 | 12 | **Dual-threshold context-aware matching**: Single threshold cannot separate same-camera-sequential different-person scores from cross-camera same-person scores (both ~0.68–0.72). Fix: `BODY_MATCH_THRESHOLD_SAME_CAM = 0.75` for same-camera, `BODY_MATCH_THRESHOLD_CROSS_CAM = 0.68` for cross-camera. `searcher.search_by_embedding()` accepts optional `min_threshold` parameter so main.py can request the cross-cam floor. |
 | 13 | **Triple-threshold overlap-aware matching (Part 8.5)**: Cameras sharing a room can view the same person simultaneously from opposite angles; OSNet same-person scores for that case land in 0.55–0.70 — below the 0.68 cross-cam floor, causing ID splits. Fix: third branch `BODY_MATCH_THRESHOLD_OVERLAP = 0.62` fires when `are_overlapping_cams(cur_cam, last_cam)` returns True. User-declares topology via `CAMERA_OVERLAP_GROUPS`. Co-visibility boost added to reconciliation: if two person_ids are seen in lock-step on overlap-partner cameras ≥ 3 times, their merge threshold relaxes from 0.58 to 0.45 (backstop for splits the live matcher missed). |
-| 14 | **LLM body description + natural-language search (Part 10 / Phase 4A+4B)**: Embedding-only Re-ID can't answer "find a man in a red t-shirt". Adds (a) abstract `Describer` ABC with two backends — `QwenVLOllamaDescriber` (CPU, default) and `MarlinRemoteDescriber` (POSTs to GPU host running `modules/llm/marlin_server/serve.py`); (b) append-only `person_descriptions` table with `latest_description_id` denormalised pointer; (c) durable `description_queue` job table; (d) `DescriptionWorker` daemon mirroring ReconciliationWorker pattern, never blocks embedding worker; (e) `QueryParser` (text-only Ollama, `qwen2.5:3b`) + `TextSearchEngine` (Stage 1 SQL filter via `json_extract`, Stage 2 synonym-aware soft rerank, Stage 3 sentence-transformers fallback). CLI: `--describe-all`, `--search-text "..."`. Phase 4C/4D (multi-snapshot consensus, color sanity-check, re-description triggers, hybrid photo+text rerank) deferred. |
+| 14 | **LLM body description + natural-language search (Part 10 / Phase 4A+4B)**: Embedding-only Re-ID can't answer "find a man in a red t-shirt". Adds (a) abstract `Describer` ABC with two backends — `QwenVLOllamaDescriber` (CPU, default) and `MarlinRemoteDescriber` (POSTs to GPU host running `modules/llm/marlin_server/serve.py`); (b) append-only `person_descriptions` table with `latest_description_id` denormalised pointer; (c) durable `description_queue` job table; (d) `DescriptionWorker` daemon mirroring ReconciliationWorker pattern, never blocks embedding worker; (e) **semantic search** — `long_description` embedded with `all-MiniLM-L6-v2` at describe time and stored in `person_descriptions.embedding`; queries are embedded and cosine-ranked (nearest meaning). The original SQL-`LIKE`/QueryParser/synonym pipeline was replaced (LL-V) because keyword matching was brittle. CLI: `--describe-all`, `--redescribe-all`, `--search-text "..."`. Describer output is now flexible/anti-hallucination (visible-only keys + long_description). Phase 4C/4D (multi-snapshot consensus, color sanity-check, hybrid photo+text rerank) deferred. |
 
 ---
 

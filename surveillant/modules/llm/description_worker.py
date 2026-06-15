@@ -186,8 +186,16 @@ class DescriptionWorker:
             self._n_failed += 1
             return
 
-        # 3. Persist.
-        summary = attributes.get("summary")
+        # 3. Persist. The human-readable text is the model's long_description
+        #    (flexible schema); it is also what we embed for semantic search.
+        summary = attributes.get("long_description") or attributes.get("summary")
+        embedding = None
+        if summary:
+            try:
+                from modules.search.text_embedder import embed_text
+                embedding = embed_text(summary)   # float32 bytes or None
+            except Exception as exc:  # embedding must never fail the describe
+                print(f"[DESCRIBE] embedding unavailable: {exc}")
         desc_id = self._db.insert_description(
             person_id      = person_id,
             backend        = self._describer.backend_name,
@@ -196,6 +204,7 @@ class DescriptionWorker:
             attributes     = attributes,
             summary        = summary,
             confidence     = attributes.get("_confidence"),  # backends may add this
+            embedding      = embedding,
         )
         self._db.complete_description(queue_id, desc_id)
         self._n_described += 1
