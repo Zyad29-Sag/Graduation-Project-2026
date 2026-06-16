@@ -1,0 +1,37 @@
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# ── Model weights ───────────────────────────────────────────────────────────
+# Kept on Google Drive — too large for git (some exceed GitHub's 100 MB limit).
+# Drop the team's .pth files into surveillant/models/ locally; they are ignored.
+surveillant/models/
+*.pth
+*.onnx
+*.h5
+
+# ── Reference copy from the team (to be deleted; contains large zips) ────────
+My college old verision/
+*.zip
+
+# ── Databases & runtime state (regenerated at runtime) ──────────────────────
+*.db
+*.db-wal
+*.db-shm
+surveillant/database/track_registry_session.json
+surveillant/database/faiss_index.bin
+surveillant/database/faiss_meta.pkl
+surveillant/database/violence_log.json
+
+# ── Violence alert media (generated at runtime) ─────────────────────────────
+alerts/
+
+# ── OS / IDE ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

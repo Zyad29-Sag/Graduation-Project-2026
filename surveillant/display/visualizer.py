@@ -171,6 +171,7 @@ class GridDisplay:
         cam_id: int,
         frame: np.ndarray,
         tracks: List[Dict[str, Any]],
+        banner: Optional[str] = None,
     ) -> None:
         """
         Annotate a frame with bounding boxes and track labels, then store
@@ -185,6 +186,12 @@ class GridDisplay:
             gallery_size : int — number of gallery embeddings so far
             label        : str — optional override label (legacy support)
             color        : tuple — optional override BGR color (legacy support)
+            # Part 11 — additive face attributes (display only):
+            name, gender, age_range, ethnicity, glasses, returning_face
+
+        ``banner`` (Part 11) is an optional per-camera violence status string
+        (e.g. "VIOLENCE (0.91)"). When present and not "OK", a colored banner +
+        frame border is drawn. None → nothing drawn (unchanged behavior).
         """
         annotated = frame.copy()
 
@@ -230,6 +237,22 @@ class GridDisplay:
                 total     = track.get("buffer_total", 8)
                 label     = f"CAM{cam_id} | T{tid} | ({buf_len}/{total})"
 
+            # ----------------------------------------------------------
+            # Part 11 — append additive face attributes (display only).
+            # Only present when face analysis is enabled and a face was read;
+            # absent fields are simply skipped, so the label is unchanged when
+            # the face layer is off.
+            # ----------------------------------------------------------
+            if pid:
+                attr_bits = []
+                if track.get("name"):           attr_bits.append(str(track["name"]))
+                if track.get("gender"):         attr_bits.append(str(track["gender"]))
+                if track.get("age_range"):      attr_bits.append(str(track["age_range"]))
+                if track.get("ethnicity"):      attr_bits.append(str(track["ethnicity"]))
+                if track.get("glasses"):        attr_bits.append(str(track["glasses"]))
+                if track.get("returning_face"): attr_bits.append("RET")
+                if attr_bits:
+                    label = label + " | " + " | ".join(attr_bits)
 
             # ----------------------------------------------------------
             # Draw bounding box
@@ -272,6 +295,17 @@ class GridDisplay:
                 font_thick,
                 cv2.LINE_AA,
             )
+
+        # Part 11 — violence banner + frame border (drawn once per frame).
+        # Only VIOLENCE / SUSPICIOUS are shown prominently; "OK" stays quiet.
+        if banner and "OK" not in banner.upper():
+            up = banner.upper()
+            bcolor = (0, 0, 255) if "VIOLENCE" in up else (0, 165, 255)  # red / orange
+            h_a, w_a = annotated.shape[:2]
+            cv2.rectangle(annotated, (0, 0), (w_a, 28), bcolor, -1)
+            cv2.putText(annotated, banner, (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.rectangle(annotated, (0, 0), (w_a - 1, h_a - 1), bcolor, 4)
 
         # Camera watermark
         resized = cv2.resize(annotated, (self.cell_w, self.cell_h))

@@ -224,6 +224,13 @@ def run_phase2(video_paths: list) -> None:
         BYTETRACK_TRACK_THRESH,
         ENABLE_FAISS, FAISS_AUDIT_MODE,
         ENABLE_DESCRIPTION_WORKER, DESCRIPTION_QUEUE_MAXSIZE,
+        # Part 11 — face + violence (additive, default OFF)
+        ENABLE_FACE_ANALYSIS,
+        GLASSES_MODEL_PATH, GLASSES_CONF_THRESHOLD,
+        ETHNICITY_MODEL_PATH, ETHNICITY_CLASSES,
+        ENABLE_VIOLENCE_DETECTION, VIOLENCE_MODEL_PATH,
+        VIOLENCE_SEQ_LEN, VIOLENCE_THRESHOLD, VIOLENCE_REQUIRED_CONSEC,
+        VIOLENCE_EMAIL_COOLDOWN_SEC, VIOLENCE_CLIP_BUFFER_LEN, ALERTS_DIR,
     )
     from modules.llm.describer import build_describer
     from modules.llm.description_worker import DescriptionWorker
@@ -273,6 +280,34 @@ def run_phase2(video_paths: list) -> None:
     gallery_mgr    = GalleryManager()
     quality_gate   = CropQualityGate()    # Part 2 — preflight before queueing for identification
 
+    # ── Part 11 — Face analysis (optional, ADDITIVE — never affects identity) ─
+    # Built only when enabled. Each sub-model (InsightFace / glasses / ethnicity)
+    # degrades gracefully if unavailable. If InsightFace itself can't load, the
+    # whole face layer is disabled for this run (no faces → no chips to classify).
+    face_analyzer = None
+    if ENABLE_FACE_ANALYSIS:
+        from modules.face.face_analyzer import FaceAnalyzer
+        from modules.detection.glasses_detector import GlassesDetector
+        from modules.face.ethnicity_classifier import EthnicityClassifier
+        _glasses   = GlassesDetector(GLASSES_MODEL_PATH, GLASSES_CONF_THRESHOLD)
+        _ethnicity = EthnicityClassifier(ETHNICITY_MODEL_PATH, ETHNICITY_CLASSES)
+        face_analyzer = FaceAnalyzer(glasses_detector=_glasses, ethnicity_classifier=_ethnicity)
+        if not face_analyzer.ready:
+            print("[FACE] InsightFace unavailable — face analysis disabled for this run.")
+            face_analyzer = None
+    else:
+        print("[SURVEILLANT] Face analysis DISABLED via config.ENABLE_FACE_ANALYSIS.")
+
+    # ── Part 11 — Violence detection (optional, isolated daemon) ─────────────
+    violence_detector = None
+    if ENABLE_VIOLENCE_DETECTION:
+        from modules.violence.violence_detector import ViolenceDetector
+        violence_detector = ViolenceDetector(VIOLENCE_MODEL_PATH)
+        if not violence_detector.is_ready:
+            violence_detector = None   # weights missing → stay disabled
+    else:
+        print("[SURVEILLANT] Violence detection DISABLED via config.ENABLE_VIOLENCE_DETECTION.")
+
     # ── Track registry (RULE 1 store) ──────────────────────────────────────
     # (cam_id, track_id) → person_uuid   |   Permanent once written.
     # IMPORTANT: Do NOT load from the previous session file.
@@ -295,6 +330,11 @@ def run_phase2(video_paths: list) -> None:
     track_state_cache: dict = {}
     state_lock  = threading.Lock()
     flash_times: dict = {}     # (cam_id, track_id) → float timestamp of binding
+
+    # Part 11 — latest violence banner per camera (written by violence_worker,
+    # read by the render loop). Empty dict when violence detection is disabled.
+    v_labels: dict = {}
+    v_label_lock = threading.Lock()
 
     # ── Async embedding queue ───────────────────────────────────────────────
     # Items: ('identify', cam_id, track_id, [crop, ...])
@@ -446,6 +486,14 @@ def run_phase2(video_paths: list) -> None:
                         t["person_id"]   = person_uuid
                         t["gallery_size"]= info.get("gallery_size", 1)
                         t["status"]      = info.get("status", "unverified")
+                        # Part 11 — additive face attributes (display only; do
+                        # not influence identity). Absent when face analysis off.
+                        t["name"]           = info.get("name")
+                        t["age_range"]      = info.get("age_range")
+                        t["gender"]         = info.get("gender")
+                        t["ethnicity"]      = info.get("ethnicity")
+                        t["glasses"]        = info.get("glasses")
+                        t["returning_face"] = info.get("returning_face", False)
 
                         # Queue gallery update every N frames (non-blocking).
                         # Pre-gate on raw crop (darkness check must see original).
@@ -721,6 +769,41 @@ def run_phase2(video_paths: list) -> None:
                         }
                     flash_times[key] = time.time()
 
+                    # ── Part 11 — Face analysis (ADDITIVE; never affects identity) ──
+                    # Runs AFTER the body pipeline already decided person_uuid
+                    # above, so it cannot influence cross-camera identity. Stores
+                    # the face vector in the ISOLATED face_embeddings table and
+                    # writes display attributes onto the persons row + state cache.
+                    if face_analyzer is not None:
+                        try:
+                            f_attrs, f_emb = face_analyzer.analyze(buf)
+                            if f_emb is not None:
+                                db.add_face_embedding(
+                                    person_uuid, f_emb.astype(np.float32).tobytes(),
+                                    source_cam=cam_id, captured_at=now_str,
+                                )
+                            if any(f_attrs.get(k) for k in
+                                   ("name", "gender", "age_range", "ethnicity", "glasses")):
+                                db.update_person_attributes(
+                                    person_uuid,
+                                    name=f_attrs.get("name"), gender=f_attrs.get("gender"),
+                                    age_range=f_attrs.get("age_range"),
+                                    ethnicity=f_attrs.get("ethnicity"),
+                                    glasses=f_attrs.get("glasses"),
+                                )
+                            with state_lock:
+                                if key in track_state_cache:
+                                    track_state_cache[key].update({
+                                        "name":           f_attrs.get("name"),
+                                        "gender":         f_attrs.get("gender"),
+                                        "age_range":      f_attrs.get("age_range"),
+                                        "ethnicity":      f_attrs.get("ethnicity"),
+                                        "glasses":        f_attrs.get("glasses"),
+                                        "returning_face": f_attrs.get("returning", False),
+                                    })
+                        except Exception as exc:
+                            print(f"[FACE] analysis failed for {person_uuid[:8]}: {exc}")
+
                     # Save snapshot crops
                     person_folder  = SNAPSHOTS_DIR / person_uuid
                     person_folder.mkdir(exist_ok=True)
@@ -768,11 +851,76 @@ def run_phase2(video_paths: list) -> None:
                     with pending_lock:
                         pending_ids.discard(key)
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Part 11 — VIOLENCE THREAD (optional, fully isolated)
+    # Consumes a per-camera frame buffer, scores short clips, and writes ONLY to
+    # violence_log.json / alert clips / optional email. It never reads or writes
+    # the person tables, embeddings, registry, or tracking dicts — so it cannot
+    # affect identity in any way.
+    # ─────────────────────────────────────────────────────────────────────────
+    vio_thread = None
+    if violence_detector is not None:
+        import collections
+        v_seq_bufs   = {i: collections.deque(maxlen=VIOLENCE_SEQ_LEN) for i in range(num_cams)}
+        v_clip_bufs  = {i: collections.deque(maxlen=VIOLENCE_CLIP_BUFFER_LEN) for i in range(num_cams)}
+        v_raw_last   = {i: None for i in range(num_cams)}
+        v_consec     = {i: 0 for i in range(num_cams)}
+        v_last_email = {i: 0.0 for i in range(num_cams)}
+        violence_log_path = TRACK_REGISTRY_PATH.parent / "violence_log.json"
+
+        def violence_worker():
+            from modules.violence.alerts import (
+                append_violence_log, save_snapshot_and_clip, send_email_alert,
+            )
+            cam_ids = list(range(num_cams)); idx = 0
+            while running.is_set():
+                cam_id = cam_ids[idx % len(cam_ids)]; idx += 1
+                with frame_lock:
+                    raw = latest_frames.get(cam_id)
+                if raw is None:
+                    time.sleep(0.005); continue
+                v_raw_last[cam_id] = raw
+                v_clip_bufs[cam_id].append(raw.copy())
+                v_seq_bufs[cam_id].append(violence_detector.preprocess(raw))
+                if len(v_seq_bufs[cam_id]) < VIOLENCE_SEQ_LEN:
+                    continue
+                score = violence_detector.score(list(v_seq_bufs[cam_id]))
+                if score is None:
+                    v_seq_bufs[cam_id].clear(); continue
+                v_consec[cam_id] = v_consec[cam_id] + 1 if score >= VIOLENCE_THRESHOLD else 0
+                is_violent = v_consec[cam_id] >= VIOLENCE_REQUIRED_CONSEC
+                label = (f"VIOLENCE ({score:.2f})" if is_violent
+                         else f"SUSPICIOUS ({score:.2f})" if score >= 0.55
+                         else f"OK ({score:.2f})")
+                with v_label_lock:
+                    v_labels[cam_id] = label
+                if is_violent or score >= 0.55:
+                    append_violence_log(violence_log_path, {
+                        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "cam_id": cam_id, "score": round(score, 3),
+                        "level": "VIOLENCE" if is_violent else "SUSPICIOUS", "label": label,
+                    })
+                if is_violent:
+                    now_ts = time.time()
+                    if now_ts - v_last_email[cam_id] > VIOLENCE_EMAIL_COOLDOWN_SEC:
+                        v_last_email[cam_id] = now_ts
+                        v_consec[cam_id] = 0
+                        img_path, _ = save_snapshot_and_clip(
+                            ALERTS_DIR, cam_id, v_raw_last[cam_id], list(v_clip_bufs[cam_id]))
+                        threading.Thread(target=send_email_alert,
+                                         args=(img_path, cam_id), daemon=True).start()
+                v_seq_bufs[cam_id].clear()
+
+        vio_thread = threading.Thread(target=violence_worker, daemon=True)
+
     # ── Start threads ──────────────────────────────────────────────────────
     det_thread  = threading.Thread(target=detection_worker, daemon=True)
     emb_thread  = threading.Thread(target=embedding_worker, daemon=True)
     det_thread.start()
     emb_thread.start()
+    if vio_thread is not None:
+        vio_thread.start()
+        print("[SURVEILLANT] Violence detection worker started.")
     print("[SURVEILLANT] Detection (round-robin) + embedding (async) workers started.")
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -804,7 +952,13 @@ def run_phase2(video_paths: list) -> None:
                 if now - current_det_times.get(cam_id, 0.0) > STALE_TRACK_TIMEOUT:
                     tracks = []
 
-                display.update(cam_id, frame, tracks)
+                # Part 11 — violence banner for this camera (None when disabled)
+                banner = None
+                if v_labels:
+                    with v_label_lock:
+                        banner = v_labels.get(cam_id)
+
+                display.update(cam_id, frame, tracks, banner=banner)
 
             display.render()
 
@@ -815,6 +969,8 @@ def run_phase2(video_paths: list) -> None:
         recon_worker.stop()
         det_thread.join(timeout=2)
         emb_thread.join(timeout=5)
+        if vio_thread is not None:
+            vio_thread.join(timeout=2)
         simulator.release()
         cv2.destroyAllWindows()
         save_registry()
@@ -923,6 +1079,75 @@ def run_phase3(query_path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 — FACE-image search (Part 11)
+# ---------------------------------------------------------------------------
+
+def run_phase3_face(query_path: str) -> None:
+    """
+    Search for a person by a FACE image.
+
+    Extract the query's face embedding (InsightFace) and rank persons by cosine
+    similarity over the ISOLATED face_embeddings store. Fully separate from the
+    body photo search (run_phase3) — it never touches person_embeddings, so face
+    search and body identity never interfere.
+    """
+    import os
+    from modules.storage.database import Database
+    from modules.face.face_analyzer import FaceAnalyzer
+    from modules.face.face_searcher import FaceSearcher
+
+    if not os.path.exists(query_path):
+        print(f"[ERROR] Query image not found: {query_path}")
+        return
+
+    print(f"[SURVEILLANT] Phase 3 (FACE): searching for {query_path}...")
+    db = Database()
+    face_analyzer = FaceAnalyzer()   # detection + embedding only; no glasses/ethnicity needed
+    if not face_analyzer.ready:
+        print("[ERROR] InsightFace unavailable — cannot run face-image search. "
+              "Install 'insightface' and 'onnxruntime'.")
+        return
+
+    searcher = FaceSearcher(db, face_analyzer)
+    matches  = searcher.search_by_face_photo(query_path, top_k=5)
+    if not matches:
+        print("[SURVEILLANT] No face matches found in the database.")
+        return
+
+    print("--- FACE SEARCH RESULTS ---")
+    panels = []
+    for i, m in enumerate(matches):
+        score = m["similarity_score"]
+        pid   = m["person_id"]
+        name  = m.get("name") or "-"
+        print(f"#{i+1}: Score: {score:.2f} | Name: {name} | "
+              f"Cam: {m.get('last_seen_cam')} | Time: {m.get('last_seen_time')} | ID: {pid[:8]}")
+        snaps = m.get("snapshot_paths", [])
+        if snaps and os.path.exists(snaps[0]):
+            panel = cv2.resize(cv2.imread(snaps[0]), (200, 400))
+        else:
+            panel = np.zeros((400, 200, 3), dtype=np.uint8)
+        cv2.putText(panel, f"#{i+1} {score:.2f}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        if name != "-":
+            cv2.putText(panel, name, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+        panels.append(panel)
+    while len(panels) < 5:
+        panels.append(np.zeros((400, 200, 3), dtype=np.uint8))
+
+    query_img  = cv2.imread(query_path)
+    query_disp = (cv2.resize(query_img, (200, 400)) if query_img is not None
+                  else np.zeros((400, 200, 3), dtype=np.uint8))
+    cv2.putText(query_disp, "QUERY (face)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+    sep = np.full((400, 10, 3), 200, dtype=np.uint8)
+    canvas = np.hstack([query_disp, sep, np.hstack(panels)])
+    cv2.namedWindow("SURVEILLANT - Face Search", cv2.WINDOW_NORMAL)
+    cv2.imshow("SURVEILLANT - Face Search", canvas)
+    print("\n[SURVEILLANT] Press any key in the image window to close.")
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -960,7 +1185,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--query",
         type=str,
-        help="Path to a query image. Required for phase 3.",
+        help="Phase 3: path to a BODY query image (searches body Re-ID gallery).",
+    )
+    parser.add_argument(
+        "--face-photo",
+        dest="face_photo",
+        type=str,
+        metavar="IMAGE",
+        help=(
+            "Phase 3: search for a person by a FACE image. Extracts the face "
+            "embedding and searches the isolated face store (Part 11). Use "
+            "instead of --query. Requires ENABLE_FACE_ANALYSIS deps (insightface)."
+        ),
     )
 
     # ── Phase 4 — LLM description + text search (Part 10) ───────────────────
@@ -1171,9 +1407,14 @@ if __name__ == "__main__":
             run_phase2(video_paths)
 
     elif args.phase == 3:
-        if not args.query:
-            parser.error("--query is required for phase 3.")
-        run_phase3(args.query)
+        if args.face_photo:
+            run_phase3_face(args.face_photo)
+        elif args.query:
+            run_phase3(args.query)
+        else:
+            parser.error(
+                "Phase 3 requires --query (body image) or --face-photo (face image)."
+            )
 
     elif args.phase == 4:
         # Part 10 — LLM body description + natural-language semantic search.

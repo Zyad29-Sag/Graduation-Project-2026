@@ -388,6 +388,74 @@ MAX_SNAPSHOTS_PER_PERSON = 5
 
 
 # ---------------------------------------------------------------------------
+# Face analysis (Part 11 — merged from team branch; ADDITIVE, default OFF)
+# ---------------------------------------------------------------------------
+# Face is an ADDITIVE layer: it contributes display attributes (age, gender,
+# ethnicity, glasses), a named watchlist, a "returning face" badge, and a
+# face-image search path (Phase 3 --face-photo). It NEVER decides cross-camera
+# body identity — that stays 100% OSNet / ByteTrack driven.
+#
+# Default OFF, exactly like ENABLE_DESCRIPTION_WORKER: InsightFace adds real CPU
+# load to the embedding worker, so it is kept out of the live loop unless
+# explicitly enabled. Flip to True to use it; verify perf on your hardware.
+# ENABLED 2026-06-16: team weights received + verified loading; face layer live.
+ENABLE_FACE_ANALYSIS   = True
+
+# InsightFace model pack (auto-downloads on first use). buffalo_l = full
+# detection + recognition + age/gender. Detector input reuses FACE_DET_SIZE.
+INSIGHTFACE_MODEL      = "buffalo_l"
+
+# Named watchlist: drop reference photos in KNOWN_FACES_DIR (one face/file);
+# the filename ("john_doe.jpg") becomes the displayed name ("John Doe").
+KNOWN_FACES_DIR        = BASE_DIR / "data" / "known_faces"
+# "Returning face" gallery: face chips of previously-seen people. A query face
+# matching one is badged "returning" (LABEL ONLY — never binds/merges a
+# person_id; cross-camera identity stays body-driven).
+FACESFROMVID_DIR       = BASE_DIR / "data" / "facesfromvid"
+
+KNOWN_FACE_TOLERANCE     = 0.35   # cosine-sim >= this => match a NAMED person
+RETURNING_FACE_TOLERANCE = 0.40   # cosine-sim >= this => "returning" badge
+FACE_SEARCH_THRESHOLD    = 0.40   # Phase-3 --face-photo: min sim to report a hit
+
+# Custom classifier weights. NOT bundled — obtain the .pth files from the team
+# and drop them in MODELS_DIR. Each feature auto-DISABLES (warns, no-ops) if its
+# file is missing, so the system runs fine without them.
+MODELS_DIR             = BASE_DIR / "models"
+GLASSES_MODEL_PATH     = MODELS_DIR / "glasses_classifier.pth"
+GLASSES_CONF_THRESHOLD = 0.50
+ETHNICITY_MODEL_PATH   = MODELS_DIR / "best_race_classifier_resnet18_new.pth"
+ETHNICITY_CLASSES      = (
+    "Asian", "Black", "Indian", "Latino_Hispanic", "Middle_Eastern", "White",
+)
+
+# ---------------------------------------------------------------------------
+# Violence detection (Part 11 — merged from team branch; ADDITIVE, default OFF)
+# ---------------------------------------------------------------------------
+# A CNN-LSTM (ResNet50 + BiLSTM) over short frame sequences, in its OWN daemon
+# thread. Writes only to violence_log.json / alert clips / optional email —
+# never touches the person tables or tracking state. Default OFF; email stays
+# OFF unless SMTP creds are supplied via environment / .env.
+ENABLE_VIOLENCE_DETECTION   = True   # ENABLED 2026-06-16: violence_detector_v3_office.pth received + verified
+VIOLENCE_MODEL_PATH         = MODELS_DIR / "violence_detector_v3_office.pth"
+VIOLENCE_SEQ_LEN            = 16
+VIOLENCE_THRESHOLD          = 0.65
+VIOLENCE_REQUIRED_CONSEC    = 2
+VIOLENCE_EMAIL_COOLDOWN_SEC = 15
+VIOLENCE_CLIP_BUFFER_LEN    = 48      # raw frames kept for the alert clip (~3 s @ 15 fps)
+ALERTS_DIR                  = BASE_DIR / "alerts"
+
+# Violence email alerts (opt-in). All read from environment / .env so NO
+# credentials are ever committed. Leave VIOLENCE_ALERT_SENDER empty to keep
+# email disabled (clips + JSON log still work). NEVER hardcode an app password
+# here — the team's old copy leaked one; that password should be revoked.
+VIOLENCE_ALERT_SENDER   = os.environ.get("SURVEILLANT_ALERT_SENDER", "")
+VIOLENCE_ALERT_PASSWORD = os.environ.get("SURVEILLANT_ALERT_PASSWORD", "")
+VIOLENCE_ALERT_RECEIVER = os.environ.get("SURVEILLANT_ALERT_RECEIVER", "")
+VIOLENCE_SMTP_HOST      = os.environ.get("SURVEILLANT_SMTP_HOST", "smtp.gmail.com")
+VIOLENCE_SMTP_PORT      = int(os.environ.get("SURVEILLANT_SMTP_PORT", "465"))
+
+
+# ---------------------------------------------------------------------------
 # Camera-topology helpers (Part 8.5)
 # ---------------------------------------------------------------------------
 

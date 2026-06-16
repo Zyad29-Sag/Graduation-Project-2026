@@ -35,6 +35,115 @@
 | Part 9 | Spatio-Temporal Camera Constraints | 🔲 Not yet implemented |
 | Part 10 (Phase 4A+4B) | LLM Body Description + Natural-Language Search | ✅ Complete |
 | Part 10 (Phase 4C/4D) | Multi-snapshot consensus, color sanity-check, re-description triggers, hybrid photo+text rerank | 🔲 Deferred |
+| Part 11 | Face & Violence integration (InsightFace + glasses + ethnicity + CNN-LSTM violence) merged from team branch — ADDITIVE | ✅ Code complete (awaiting team `.pth` weights) |
+
+---
+
+## Part 11 — Face & Violence Integration (merged from team branch) — 2026-06-16
+
+> Merge of the team's last-semester face-side models into the current system.
+> Their copy had branched from an OLDER version (DeepSORT + MobileNetV3 body
+> embeddings), so ONLY the face/violence work was lifted; their regressed body
+> stack was discarded. The current ByteTrack + OSNet body pipeline is unchanged.
+
+### What was added
+- **Face analysis** (`modules/face/face_analyzer.py`): InsightFace (buffalo_l)
+  face detection + 512-d embedding + age/gender, a named watchlist
+  (`data/known_faces/`), and a "returning face" badge (`data/facesfromvid/`).
+- **Glasses** (`modules/detection/glasses_detector.py`) and **ethnicity**
+  (`modules/face/ethnicity_classifier.py`) ResNet18 classifiers.
+- **Violence detection** (`modules/violence/violence_detector.py` + `alerts.py`):
+  CNN-LSTM (ResNet50 + BiLSTM) over 16-frame clips, in its own daemon thread,
+  with JSON log + alert clip + optional email.
+- **Face-image search**: `modules/face/face_searcher.py` + `main.py --phase 3
+  --face-photo IMG` — "find this person by their face".
+- **DB**: new ISOLATED `face_embeddings` table; new `persons` columns
+  `name`/`ethnicity`/`glasses`; methods `add_face_embedding`,
+  `get_all_face_embeddings`, `update_person_attributes`.
+- **Config**: `ENABLE_FACE_ANALYSIS`, `ENABLE_VIOLENCE_DETECTION` (+ model paths
+  under `models/`, thresholds, SMTP-from-env). All default OFF.
+
+### Why (key design decisions)
+- **Additive only** (user's explicit choice): face/violence contribute
+  attributes, watchlist names, "returning" badges, alerts, and a face-search
+  path — but cross-camera BODY identity stays 100% OSNet/ByteTrack driven.
+  Nothing in this layer binds, merges, or re-scores a `person_id`.
+- **Face embeddings are ISOLATED in `face_embeddings`, never in
+  `person_embeddings`.** Critical reason: InsightFace vectors are 512-d — the
+  SAME dimension as OSNet body — and the body searcher / FAISS / reconciliation
+  pool by DIMENSION, not by `embedding_type`. Mixing them would silently corrupt
+  body identity. `add_face_embedding` also does NOT fire the `on_embedding_added`
+  FAISS hook, so face vectors never reach the body index.
+- **Default OFF + graceful disable**, mirroring `ENABLE_DESCRIPTION_WORKER`:
+  with flags off the system behaves byte-for-byte as before. Each model
+  auto-disables (warn + no-op) when its `.pth` is missing.
+- **No committed secrets**: the team's copy hardcoded a live Gmail app password;
+  email creds now come from environment variables only (empty → email disabled).
+
+### Old approach (discarded from the team copy)
+- DeepSORT tracker + MobileNetV3 576-d body embeddings (older than current).
+- A single `PersonEmbedder` mixing body + face + ethnicity; hardcoded Windows
+  model paths (`C:\Users\Zyad\...`); face embeddings written into the shared
+  gallery.
+
+### Result / Status
+- ✅ Code integrated, flag-gated, isolated. Body pipeline untouched.
+- ⏳ Pending team `.pth` files (glasses / ethnicity / violence) — those features
+  stay disabled until the weights are dropped into `surveillant/models/`.
+- Verification: regression run with flags OFF + Phase 1–3 tests; face core
+  verified with `ENABLE_FACE_ANALYSIS=True` (InsightFace auto-downloads).
+
+### Dashboard upgrade (Part 11 tooling) — 2026-06-16
+
+Reworked the debug dashboard (`debug_dashboard.py` + `debug_dashboard_ui.html`)
+into a richer "command center" that surfaces the new data:
+- **Backend (read-only, unchanged safety model):** enriched `/api/stats`
+  (face embeddings, descriptions, named persons, cameras, violence counts);
+  `/api/persons` now supports attribute filters (gender/age/ethnicity/glasses),
+  keyword search across id/name/description, sort, and returns the latest
+  description summary + face-embedding count. New endpoints: `/api/analytics`
+  (aggregates for charts), `/api/persons/{id}/description` (LLM history),
+  `/api/persons/{id}/face_embeddings`, `/api/violence` (reads violence_log.json),
+  `/api/alert_media` (serves alert snapshots/clips from the alerts dir, path-guarded).
+  New tables guarded via `_table_exists` for backward compatibility.
+- **Frontend:** new **Overview** tab (KPI cards + dependency-free distribution
+  charts: status, per-camera, gender/age/ethnicity/glasses, gallery histogram,
+  body-vs-face embeddings, description coverage, persons-over-time); enriched
+  **Persons** table (name, profile badges, description snippet, face count) with
+  rich filters + CSV/JSON export; expanded **detail panel** (profile, LLM
+  description + structured attributes + history, body + face embeddings, camera
+  timeline); new **Violence** tab with severity feed + snapshot/clip media; and a
+  fuller header stat bar.
+- Verified by seeding a temp DB and exercising every endpoint (stats, filtered
+  persons, analytics, description, face, violence) — all green.
+
+### Model deployment & live verification (Part 11) — 2026-06-16
+
+The team delivered the trained weights (`models (2).zip`). Deployed and verified:
+- Placed `best_race_classifier_resnet18_new.pth`, `glasses_classifier.pth`,
+  `violence_detector_v3_office.pth` into `surveillant/models/`. (The zip's extra
+  `age_mobilenetv2_balanced.h5` and `fairface.onnx` are not used — InsightFace
+  provides age, and ethnicity uses the ResNet18 — left unwired.)
+- **Glasses loader fix:** the glasses checkpoint turned out to be a **ResNet-50**
+  (Bottleneck blocks) nested under a `base.` prefix with a single sigmoid head —
+  NOT a ResNet-18. The original loader silently matched 0 weights (ran on random
+  init). `GlassesDetector` now auto-detects backbone depth (18/34/50 via bn3/layer
+  probes) and strips wrapper prefixes; reloads with `missing=0 unexpected=0`.
+- Installed `insightface==1.0.1` + `onnxruntime==1.27.0` (0.7.3 has no Python-3.12
+  wheel); updated `requirements.txt`.
+- Enabled `ENABLE_FACE_ANALYSIS=True` and `ENABLE_VIOLENCE_DETECTION=True`.
+- **End-to-end live check:** `buffalo_l` downloaded; analyzing a real person
+  snapshot produced age `30-45`, gender `Male`, ethnicity `Asian`, glasses
+  `Glasses`, plus a 512-d face embedding. Violence model scores on a frame seq.
+  All four model groups confirmed working on CPU.
+- Remaining: the full multi-camera live run (`python main.py --phase 2 --set
+  set_1`) is run on the user's machine (needs the WiseNet videos + a display).
+- Dashboard fix: the read-only dashboard crashed (`no such column: ethnicity`)
+  on a pre-Part-11 DB because it can't run migrations. Made it column-resilient
+  (`_columns()` guards in `/api/stats`, `/api/persons`, `/api/analytics`) AND
+  migrated the existing `surveillant.db` (added name/ethnicity/glasses +
+  face_embeddings). Attribute columns populate after a Phase-2 run with
+  ENABLE_FACE_ANALYSIS=True.
 
 ---
 

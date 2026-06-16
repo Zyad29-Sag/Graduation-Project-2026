@@ -84,6 +84,12 @@ The project follows a build-spec (`SURVEILLANT_BUILD_SPEC.md`) with strict phase
 | `modules/search/faiss_index.py` | FAISSIndex — in-memory vector index |
 | `modules/reconciliation/worker.py` | ReconciliationWorker — background merge daemon |
 | `modules/llm/describer.py` | PersonDescriber — Ollama + Qwen2.5-VL (Phase 4) |
+| `modules/face/face_analyzer.py` | FaceAnalyzer — InsightFace + watchlist + "returning" (Part 11) |
+| `modules/face/ethnicity_classifier.py` | EthnicityClassifier — ResNet18 (Part 11, optional) |
+| `modules/face/face_searcher.py` | FaceSearcher — face-image search over the isolated store (Part 11) |
+| `modules/detection/glasses_detector.py` | GlassesDetector — ResNet18 (Part 11, optional) |
+| `modules/violence/violence_detector.py` | ViolenceDetector — CNN-LSTM (Part 11, optional) |
+| `modules/violence/alerts.py` | Violence alert log/clip/email helpers (Part 11) |
 | `main.py` | Entry point — Phase 1 and Phase 2 runners |
 | `display/visualizer.py` | GridDisplay + ColorRegistry |
 
@@ -99,6 +105,11 @@ The project follows a build-spec (`SURVEILLANT_BUILD_SPEC.md`) with strict phase
 - Database callback hooks (`on_embedding_added`, `on_merge`) fire AFTER the SQLite transaction commits.
 - `Database.propose_merge()` uses upsert — never creates duplicate proposals.
 - `FORCE_ACCEPT_MAX_DISTANCE` must never exceed `1 − BODY_MATCH_THRESHOLD`. Force-accept bypasses the diversity gate — if set looser than the identification threshold, wrong-person crops can pollute a gallery even after the identification logic correctly rejects them.
+- **(Part 11) Face embeddings live ONLY in the `face_embeddings` table — never in `person_embeddings`.** InsightFace vectors are 512-d (same as OSNet body) and the body searcher / FAISS / reconciliation pool by *dimension*, not by `embedding_type`; mixing them corrupts body identity. `add_face_embedding` must never fire the `on_embedding_added` FAISS hook.
+- **(Part 11) Face & violence are ADDITIVE** — they never bind/merge/re-score a `person_id`. Cross-camera identity stays 100% body (OSNet/ByteTrack); face only contributes attributes, watchlist names, a "returning" badge, and the `--face-photo` search.
+- **(Part 11) Face & violence default OFF** (`ENABLE_FACE_ANALYSIS`, `ENABLE_VIOLENCE_DETECTION`) and degrade gracefully when a model file is missing. With flags off, runtime behavior is identical to pre-Part-11.
+- **(Part 11) The violence worker is fully isolated** — it writes only to `violence_log.json` / alert clips / email and never touches person tables, embeddings, registry, or tracking dicts; it must never block detection/embedding.
+- **(Part 11) No secrets in code** — violence email credentials come from environment variables (`SURVEILLANT_ALERT_*`) only; the team's old copy leaked a live Gmail app password (revoke it).
 
 ---
 
@@ -119,4 +130,4 @@ The project follows a build-spec (`SURVEILLANT_BUILD_SPEC.md`) with strict phase
 
 ---
 
-*Last updated: 2026-05-28*
+*Last updated: 2026-06-16 — Part 11 (face & violence integration) added.*

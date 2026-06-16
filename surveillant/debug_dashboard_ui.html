@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SURVEILLANT Debug Dashboard</title>
+<title>SURVEILLANT Command Center</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
@@ -10,11 +10,12 @@
 :root{
   --bg:#08080e;--panel:#0f0f18;--card:#14141f;--border:#1c1c2e;
   --acc:#7c3aed;--acc2:#06b6d4;--tx:#dde4f0;--mt:#566080;
-  --ok:#10b981;--wn:#f59e0b;--er:#ef4444;--bl:#3b82f6;
+  --ok:#10b981;--wn:#f59e0b;--er:#ef4444;--bl:#3b82f6;--pk:#ec4899;
 }
 body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--tx);height:100vh;display:flex;flex-direction:column;overflow:hidden}
-::-webkit-scrollbar{width:4px;height:4px}
-::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.muted{color:var(--mt)}
 /* ── Header ── */
 #hdr{background:linear-gradient(135deg,#0f0524 0%,#060d1f 100%);
   border-bottom:1px solid var(--border);padding:10px 18px;flex-shrink:0}
@@ -22,24 +23,21 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 #htop h1{font-size:1.1rem;font-weight:700;
   background:linear-gradient(90deg,#a78bfa,#38bdf8);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0;
-  animation:pu 1.6s ease-in-out infinite}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0;animation:pu 1.6s ease-in-out infinite}
 @keyframes pu{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(1.5)}}
 #ri{margin-left:auto;font-size:.7rem;color:var(--mt)}
 #sbar{display:flex;flex-wrap:wrap;gap:5px}
 .sc{background:rgba(255,255,255,.04);border:1px solid var(--border);
   border-radius:16px;padding:3px 11px;font-size:.74rem;display:flex;gap:5px;align-items:center}
 .sc b{color:var(--acc2);font-weight:600}
+.sc.warn b{color:var(--wn)} .sc.danger b{color:var(--er)}
 /* ── Layout ── */
 #lay{display:grid;grid-template-columns:255px 1fr;flex:1;overflow:hidden;min-height:0}
 /* ── Activity Feed ── */
-#af{background:var(--panel);border-right:1px solid var(--border);
-  display:flex;flex-direction:column;overflow:hidden}
-#af h2{padding:9px 13px;font-size:.73rem;color:var(--mt);
-  text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);flex-shrink:0}
+#af{background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+#af h2{padding:9px 13px;font-size:.73rem;color:var(--mt);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);flex-shrink:0}
 #alist{flex:1;overflow-y:auto;padding:5px}
-.ai{padding:7px 9px;border-radius:6px;margin-bottom:4px;cursor:pointer;
-  font-size:.73rem;border-left:3px solid transparent;transition:background .12s}
+.ai{padding:7px 9px;border-radius:6px;margin-bottom:4px;cursor:pointer;font-size:.73rem;border-left:3px solid transparent;transition:background .12s}
 .ai:hover{background:rgba(255,255,255,.04)}
 .ai.NEW_PERSON{border-color:var(--ok)} .ai.STATUS_CHANGE{border-color:var(--bl)}
 .ai.GALLERY_UPDATE{border-color:var(--wn)} .ai.MERGE{border-color:var(--acc)}
@@ -49,76 +47,106 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 /* ── Main ── */
 #main{display:flex;flex-direction:column;overflow:hidden;min-height:0}
 #tabs{display:flex;background:var(--panel);border-bottom:1px solid var(--border);padding:0 13px;flex-shrink:0}
-.tab{padding:10px 13px;font-size:.79rem;font-weight:500;cursor:pointer;
-  border-bottom:2px solid transparent;color:var(--mt);transition:all .12s}
+.tab{padding:10px 13px;font-size:.79rem;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;color:var(--mt);transition:all .12s}
 .tab.active{color:var(--tx);border-color:var(--acc)}.tab:hover:not(.active){color:var(--tx)}
 .tcon{display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0}
 .tcon.active{display:flex}
+/* ── Overview ── */
+#ov-scroll{flex:1;overflow-y:auto;padding:14px}
+#cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:9px;margin-bottom:14px}
+.kc{background:linear-gradient(135deg,var(--card),#10101c);border:1px solid var(--border);border-radius:10px;padding:11px 13px}
+.kc .v{font-size:1.7rem;font-weight:700;line-height:1.1}
+.kc .l{font-size:.68rem;color:var(--mt);text-transform:uppercase;letter-spacing:.05em;margin-top:3px}
+.kc.acc .v{color:var(--acc2)} .kc.ok .v{color:var(--ok)} .kc.warn .v{color:var(--wn)}
+.kc.danger .v{color:var(--er)} .kc.pk .v{color:var(--pk)} .kc.bl .v{color:#60a5fa}
+#charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:11px}
+.chart{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.chart h3{font-size:.74rem;font-weight:600;color:var(--tx);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.chart h3 .cnt{margin-left:auto;font-size:.66rem;color:var(--mt);font-weight:500}
+.bars{display:flex;flex-direction:column;gap:6px}
+.bar{display:grid;grid-template-columns:88px 1fr 34px;gap:8px;align-items:center;font-size:.72rem}
+.bar .bl{color:var(--mt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar .bw{height:14px;background:rgba(255,255,255,.05);border-radius:7px;overflow:hidden}
+.bar .bf{height:100%;border-radius:7px;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .4s}
+.bar .bv{text-align:right;color:var(--tx);font-weight:600;font-family:'JetBrains Mono',monospace}
+.empty{color:var(--mt);font-size:.74rem;text-align:center;padding:14px}
 /* ── Persons Controls ── */
-#pctl{display:flex;gap:7px;padding:9px 13px;background:var(--panel);
-  border-bottom:1px solid var(--border);flex-shrink:0}
-#pctl input,#pctl select{background:rgba(255,255,255,.05);border:1px solid var(--border);
-  border-radius:6px;padding:5px 9px;color:var(--tx);font-size:.78rem;outline:none;transition:border .15s}
+#pctl{display:flex;gap:7px;padding:9px 13px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;align-items:center}
+#pctl input,#pctl select{background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--tx);font-size:.76rem;outline:none;transition:border .15s}
 #pctl input:focus,#pctl select:focus{border-color:var(--acc)}
-#pctl input{flex:1}
+#pctl input.grow{flex:1;min-width:160px}
 #pctl select option{background:var(--card)}
+.btn{background:rgba(124,58,237,.15);border:1px solid var(--acc);color:#c4b5fd;border-radius:6px;padding:5px 11px;font-size:.74rem;cursor:pointer;transition:background .15s}
+.btn:hover{background:rgba(124,58,237,.3)}
+.btn.ghost{background:transparent;border-color:var(--border);color:var(--mt)}
+.btn.ghost:hover{color:var(--tx);border-color:var(--acc)}
 /* ── Table ── */
 #ptw{flex:1;overflow:auto}
 table{width:100%;border-collapse:collapse;font-size:.76rem}
 thead{position:sticky;top:0;z-index:5}
-th{padding:8px 11px;text-align:left;color:var(--mt);font-weight:600;
-  font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;
-  background:#0a0a14;border-bottom:1px solid var(--border)}
+th{padding:8px 11px;text-align:left;color:var(--mt);font-weight:600;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;background:#0a0a14;border-bottom:1px solid var(--border)}
 td{padding:7px 11px;border-bottom:1px solid rgba(255,255,255,.035);vertical-align:middle}
 tr{cursor:pointer;transition:background .1s}
 tr:hover td{background:rgba(124,58,237,.07)}
 tr.sel td{background:rgba(124,58,237,.13)}
 .th{width:36px;height:44px;object-fit:cover;border-radius:4px;display:block}
-.thp{width:36px;height:44px;border-radius:4px;background:var(--border);
-  display:flex;align-items:center;justify-content:center;color:var(--mt);
-  font-size:.55rem;text-align:center;line-height:1.2}
+.thp{width:36px;height:44px;border-radius:4px;background:var(--border);display:flex;align-items:center;justify-content:center;color:var(--mt);font-size:.55rem;text-align:center;line-height:1.2}
 .pid{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--acc2)}
+.nm{font-weight:600;color:#fde68a}
 .sb{padding:2px 7px;border-radius:10px;font-size:.66rem;font-weight:600;white-space:nowrap}
 .s-unverified{background:rgba(100,116,139,.18);color:#94a3b8}
 .s-confirmed{background:rgba(16,185,129,.13);color:var(--ok)}
 .s-multi_view{background:rgba(59,130,246,.13);color:#60a5fa}
 .s-ghost{background:rgba(100,116,139,.09);color:#475569}
 .s-flagged{background:rgba(239,68,68,.13);color:#f87171}
+.s-unknown{background:rgba(100,116,139,.12);color:#94a3b8}
+.ab{display:inline-block;padding:1px 6px;border-radius:7px;font-size:.62rem;margin:1px 2px 1px 0;white-space:nowrap}
+.b-gender{background:rgba(236,72,153,.13);color:#f9a8d4}
+.b-age{background:rgba(59,130,246,.12);color:#93c5fd}
+.b-eth{background:rgba(168,85,247,.12);color:#d8b4fe}
+.b-gl{background:rgba(245,158,11,.13);color:#fcd34d}
+.desc-cell{max-width:230px;color:#aeb6c8;font-size:.71rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.facechip{background:rgba(6,182,212,.13);color:var(--acc2);padding:1px 6px;border-radius:8px;font-size:.64rem;font-weight:600}
 .gb{display:flex;align-items:center;gap:5px;font-size:.69rem}
 .bt{width:52px;height:4px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden}
-.bf{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .3s}
-.ach{background:rgba(6,182,212,.1);color:var(--acc2);padding:1px 5px;
-  border-radius:8px;font-size:.6rem;margin:1px;display:inline-block}
+.bf2{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .3s}
+.ach{background:rgba(6,182,212,.1);color:var(--acc2);padding:1px 5px;border-radius:8px;font-size:.6rem;margin:1px;display:inline-block}
 /* ── Detail Panel ── */
-#dp{background:rgba(4,4,10,.95);border-top:2px solid var(--acc);
-  display:none;overflow-y:auto;max-height:340px;flex-shrink:0}
+#dp{background:rgba(4,4,10,.97);border-top:2px solid var(--acc);display:none;overflow-y:auto;max-height:50vh;flex-shrink:0}
 #dp.open{display:block}
 #dpi{padding:13px 17px}
 #dph{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px}
-#dpc{margin-left:auto;cursor:pointer;color:var(--mt);font-size:1.2rem;
-  line-height:1;flex-shrink:0;transition:color .12s}
+#dpc{margin-left:auto;cursor:pointer;color:var(--mt);font-size:1.2rem;line-height:1;flex-shrink:0;transition:color .12s}
 #dpc:hover{color:var(--tx)}
+.dgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:900px){.dgrid{grid-template-columns:1fr}}
 .ds{margin-bottom:11px}
-.ds h3{font-size:.7rem;font-weight:600;color:var(--mt);
-  text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px}
+.ds h3{font-size:.7rem;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px}
 #sgrid{display:flex;flex-wrap:wrap;gap:5px}
-#sgrid img{width:55px;height:67px;object-fit:cover;border-radius:4px;
-  cursor:pointer;transition:transform .15s;border:2px solid transparent}
+#sgrid img{width:55px;height:67px;object-fit:cover;border-radius:4px;cursor:pointer;transition:transform .15s;border:2px solid transparent}
 #sgrid img:hover{transform:scale(1.14);border-color:var(--acc)}
-#etbl{width:100%;border-collapse:collapse;font-size:.69rem}
-#etbl th,#etbl td{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,.04);text-align:left}
-#etbl th{color:var(--mt);background:rgba(0,0,0,.25);font-size:.67rem}
+.prof{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.prof .ab{font-size:.72rem;padding:3px 9px}
+.summary{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:7px;padding:9px 11px;font-size:.78rem;line-height:1.5;color:#cdd5e6}
+.attrs{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:5px;margin-top:7px}
+.attrs .a{background:rgba(255,255,255,.03);border-radius:5px;padding:4px 7px;font-size:.68rem}
+.attrs .a .k{color:var(--mt);font-size:.6rem;text-transform:uppercase}
+.attrs .a .v{color:var(--tx)}
+#etbl,.minitbl{width:100%;border-collapse:collapse;font-size:.69rem}
+#etbl th,#etbl td,.minitbl th,.minitbl td{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,.04);text-align:left}
+#etbl th,.minitbl th{color:var(--mt);background:rgba(0,0,0,.25);font-size:.67rem}
 .nok{color:var(--ok)}.nbd{color:var(--er)}
 .vp{font-family:'JetBrains Mono',monospace;font-size:.63rem;color:var(--mt)}
-#pcaw{height:155px;background:rgba(0,0,0,.35);border-radius:7px;
-  position:relative;margin-top:6px;overflow:hidden}
+#pcaw{height:140px;background:rgba(0,0,0,.35);border-radius:7px;position:relative;margin-top:6px;overflow:hidden}
 #pca{width:100%;height:100%}
 #pcal{position:absolute;top:4px;right:7px;font-size:.62rem;color:var(--mt)}
+.tl{position:relative;padding-left:16px}
+.tl .ev{position:relative;padding:5px 0 5px 4px;font-size:.72rem;border-left:2px solid var(--border)}
+.tl .ev::before{content:'';position:absolute;left:-5px;top:9px;width:8px;height:8px;border-radius:50%;background:var(--acc2)}
+.tl .ev .tc{color:var(--mt);font-size:.64rem}
 /* ── Merges ── */
 #merges-t{flex:1;overflow:auto;padding:13px}
-.mc{background:var(--panel);border:1px solid var(--border);border-radius:8px;
-  padding:11px;margin-bottom:8px;display:grid;
-  grid-template-columns:1fr 70px 1fr 90px;gap:10px;align-items:center;transition:border .15s}
+.mc{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:11px;margin-bottom:8px;display:grid;grid-template-columns:1fr 70px 1fr 90px;gap:10px;align-items:center;transition:border .15s}
 .mc:hover{border-color:var(--acc)}
 .mp{text-align:center}
 .mp img{width:48px;height:58px;object-fit:cover;border-radius:5px;margin-bottom:3px}
@@ -126,26 +154,30 @@ tr.sel td{background:rgba(124,58,237,.13)}
 .ss{font-size:1.25rem;font-weight:700;text-align:center}
 .ssh{color:var(--ok)}.ssm{color:var(--wn)}.ssl{color:var(--er)}
 .ms{text-align:center}
+/* ── Violence ── */
+#vio-t{flex:1;overflow:auto;padding:13px}
+#vio-sum{display:flex;gap:8px;margin-bottom:11px;flex-wrap:wrap}
+.vi{background:var(--panel);border:1px solid var(--border);border-left:4px solid var(--mt);border-radius:8px;padding:9px 12px;margin-bottom:7px;display:flex;align-items:center;gap:12px}
+.vi.VIOLENCE{border-left-color:var(--er)} .vi.SUSPICIOUS{border-left-color:var(--wn)}
+.vi .vl{font-weight:700;font-size:.78rem;min-width:96px}
+.vi.VIOLENCE .vl{color:#f87171} .vi.SUSPICIOUS .vl{color:#fcd34d}
+.vi .vmeta{color:var(--mt);font-size:.72rem;flex:1}
+.vi .vscore{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:.95rem}
+.vi img{height:54px;border-radius:5px;cursor:pointer;border:1px solid var(--border)}
+.vi a{color:var(--acc2);font-size:.72rem;text-decoration:none}
 /* ── Registry ── */
 #reg-t{flex:1;overflow:auto;padding:13px}
 .rt{width:100%;border-collapse:collapse;font-size:.76rem}
-.rt th{padding:7px 11px;background:var(--panel);color:var(--mt);
-  font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;
-  border-bottom:1px solid var(--border);text-align:left}
+.rt th{padding:7px 11px;background:var(--panel);color:var(--mt);font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);text-align:left}
 .rt td{padding:7px 11px;border-bottom:1px solid rgba(255,255,255,.035)}
 /* ── Lightbox ── */
-#lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);
-  z-index:999;align-items:center;justify-content:center}
+#lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:999;align-items:center;justify-content:center}
 #lb.show{display:flex}
-#lb img{max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 0 60px rgba(124,58,237,.4)}
-#lbc{position:absolute;top:14px;right:20px;font-size:2rem;cursor:pointer;
-  color:#fff;line-height:1;opacity:.7;transition:opacity .15s}
+#lb img,#lb video{max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 0 60px rgba(124,58,237,.4)}
+#lbc{position:absolute;top:14px;right:20px;font-size:2rem;cursor:pointer;color:#fff;line-height:1;opacity:.7;transition:opacity .15s}
 #lbc:hover{opacity:1}
 /* ── Toast ── */
-#toast{position:fixed;bottom:16px;right:16px;background:var(--card);
-  border:1px solid var(--acc);border-radius:7px;padding:8px 13px;
-  font-size:.76rem;opacity:0;transform:translateY(8px);
-  transition:all .22s;pointer-events:none;z-index:888}
+#toast{position:fixed;bottom:16px;right:16px;background:var(--card);border:1px solid var(--acc);border-radius:7px;padding:8px 13px;font-size:.76rem;opacity:0;transform:translateY(8px);transition:all .22s;pointer-events:none;z-index:888}
 #toast.show{opacity:1;transform:translateY(0)}
 </style>
 </head>
@@ -153,17 +185,21 @@ tr.sel td{background:rgba(124,58,237,.13)}
 <div id="hdr">
   <div id="htop">
     <div class="dot"></div>
-    <h1>SURVEILLANT Debug Dashboard</h1>
+    <h1>SURVEILLANT Command Center</h1>
     <span id="ri">Refreshing... | <span id="uts">0s</span> uptime</span>
   </div>
   <div id="sbar">
     <div class="sc">Persons <b id="s-total">-</b></div>
-    <div class="sc">Unverified <b id="s-unv">-</b></div>
     <div class="sc">Confirmed <b id="s-conf">-</b></div>
     <div class="sc">Multi-view <b id="s-multi">-</b></div>
     <div class="sc">Ghost <b id="s-ghost">-</b></div>
-    <div class="sc">Embeddings <b id="s-emb">-</b></div>
-    <div class="sc">Pending Merges <b id="s-pm">-</b></div>
+    <div class="sc">Body emb <b id="s-emb">-</b></div>
+    <div class="sc">Face emb <b id="s-face">-</b></div>
+    <div class="sc">Described <b id="s-desc">-</b></div>
+    <div class="sc">Named <b id="s-named">-</b></div>
+    <div class="sc">Cameras <b id="s-cams">-</b></div>
+    <div class="sc warn">Pending Merges <b id="s-pm">-</b></div>
+    <div class="sc danger">Violence <b id="s-vio">-</b></div>
   </div>
 </div>
 <div id="lay">
@@ -173,26 +209,56 @@ tr.sel td{background:rgba(124,58,237,.13)}
   </div>
   <div id="main">
     <div id="tabs">
-      <div class="tab active" onclick="showTab('persons',this)">Persons</div>
+      <div class="tab active" onclick="showTab('overview',this)">Overview</div>
+      <div class="tab" onclick="showTab('persons',this)">Persons</div>
       <div class="tab" onclick="showTab('merges',this)">Merge Proposals</div>
+      <div class="tab" onclick="showTab('violence',this)">Violence</div>
       <div class="tab" onclick="showTab('registry',this)">Track Registry</div>
     </div>
-    <div id="persons" class="tcon active">
+
+    <!-- ── OVERVIEW ── -->
+    <div id="overview" class="tcon active">
+      <div id="ov-scroll">
+        <div id="cards"></div>
+        <div id="charts"></div>
+      </div>
+    </div>
+
+    <!-- ── PERSONS ── -->
+    <div id="persons" class="tcon">
       <div id="pctl">
-        <input id="psearch" placeholder="Search person ID..." oninput="filterPersons()">
+        <input id="psearch" class="grow" placeholder="Search id / name / description..." oninput="debouncedFilter()">
         <select id="pstatus" onchange="filterPersons()">
           <option value="">All Statuses</option>
           <option>unverified</option><option>confirmed</option>
           <option>multi_view</option><option>ghost</option><option>flagged</option>
         </select>
         <select id="pcam" onchange="filterPersons()"><option value="">All Cameras</option></select>
+        <select id="pgender" onchange="filterPersons()"><option value="">Any Gender</option></select>
+        <select id="page" onchange="filterPersons()"><option value="">Any Age</option></select>
+        <select id="peth" onchange="filterPersons()"><option value="">Any Ethnicity</option></select>
+        <select id="pglasses" onchange="filterPersons()"><option value="">Any Glasses</option></select>
+        <select id="pface" onchange="filterPersons()">
+          <option value="">Face: any</option><option value="1">Has face</option><option value="0">No face</option>
+        </select>
+        <select id="pdesc" onchange="filterPersons()">
+          <option value="">Desc: any</option><option value="1">Described</option><option value="0">Not described</option>
+        </select>
+        <select id="psort" onchange="filterPersons()">
+          <option value="created_desc">Newest</option>
+          <option value="created_asc">Oldest</option>
+          <option value="last_seen_desc">Last seen</option>
+          <option value="gallery_desc">Gallery size</option>
+        </select>
+        <button class="btn ghost" onclick="exportData('csv')">CSV</button>
+        <button class="btn ghost" onclick="exportData('json')">JSON</button>
       </div>
       <div id="ptw">
         <table>
           <thead><tr>
-            <th>Img</th><th>Person ID</th><th>Status</th>
-            <th>First Seen</th><th>Last Seen</th>
-            <th>Gallery</th><th>Angles</th>
+            <th>Img</th><th>ID</th><th>Name</th><th>Status</th>
+            <th>Profile</th><th>Description</th>
+            <th>First → Last</th><th>Gallery</th><th>Face</th>
           </tr></thead>
           <tbody id="ptbl"></tbody>
         </table>
@@ -206,20 +272,45 @@ tr.sel td{background:rgba(124,58,237,.13)}
             </div>
             <span id="dpc" onclick="closeDetail()">✕</span>
           </div>
-          <div class="ds"><h3>Snapshots</h3><div id="sgrid"></div></div>
-          <div class="ds"><h3>Embeddings</h3>
-            <table id="etbl">
-              <thead><tr><th>#</th><th>Type</th><th>Angle</th><th>Cam</th><th>Captured</th><th>Dims</th><th>Norm</th><th>Preview</th></tr></thead>
-              <tbody id="etbl-body"></tbody>
-            </table>
-            <div id="pcaw"><canvas id="pca"></canvas><div id="pcal">PCA 2D</div></div>
+          <div class="ds"><h3>Profile</h3><div class="prof" id="d-prof"></div></div>
+          <div class="dgrid">
+            <div>
+              <div class="ds"><h3>Snapshots</h3><div id="sgrid"></div></div>
+              <div class="ds"><h3>LLM Description</h3><div id="d-desc"></div></div>
+              <div class="ds"><h3>Camera Timeline</h3><div class="tl" id="d-timeline"></div></div>
+            </div>
+            <div>
+              <div class="ds"><h3>Body Embeddings</h3>
+                <table id="etbl">
+                  <thead><tr><th>#</th><th>Type</th><th>Angle</th><th>Cam</th><th>Captured</th><th>Norm</th></tr></thead>
+                  <tbody id="etbl-body"></tbody>
+                </table>
+                <div id="pcaw"><canvas id="pca"></canvas><div id="pcal">PCA 2D (body)</div></div>
+              </div>
+              <div class="ds"><h3>Face Embeddings <span class="facechip" id="d-facecount">0</span></h3>
+                <table class="minitbl">
+                  <thead><tr><th>#</th><th>Cam</th><th>Captured</th><th>Norm</th></tr></thead>
+                  <tbody id="facetbl-body"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
-    <div id="merges" class="tcon">
-      <div id="merges-t"></div>
+
+    <!-- ── MERGES ── -->
+    <div id="merges" class="tcon"><div id="merges-t"></div></div>
+
+    <!-- ── VIOLENCE ── -->
+    <div id="violence" class="tcon">
+      <div id="vio-t">
+        <div id="vio-sum"></div>
+        <div id="vio-list"></div>
+      </div>
     </div>
+
+    <!-- ── REGISTRY ── -->
     <div id="registry" class="tcon">
       <div id="reg-t">
         <table class="rt">
@@ -230,251 +321,319 @@ tr.sel td{background:rgba(124,58,237,.13)}
     </div>
   </div>
 </div>
-<div id="lb"><span id="lbc" onclick="closeLb()">✕</span><img id="lb-img" src=""></div>
+<div id="lb"><span id="lbc" onclick="closeLb()">✕</span><div id="lb-content"></div></div>
 <div id="toast"></div>
 <script>
 let persons = [];
-let cameras = [];
 let selectedPersonId = null;
-let lastActivityUpdate = 120;
-let refreshInterval = null;
+let filterTimer = null;
 
-// Safe time formatter — handles ISO ("2024-01-01T03:07:14") and plain ("03:07:14")
-function fmtTime(t) {
-  if (!t) return '—';
-  const parts = String(t).split('T');
-  const time = parts.length > 1 ? parts[1] : parts[0];
-  return time.substring(0, 8);
-}
-// Safe cam formatter
-function fmtCam(c) { return c != null ? 'cam' + c : '—'; }
+const $ = id => document.getElementById(id);
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtTime(t){ if(!t) return '—'; const p=String(t).split('T'); return (p.length>1?p[1]:p[0]).substring(0,8); }
+function fmtCam(c){ return c!=null ? 'cam'+c : '—'; }
+function trunc(s,n){ s=s||''; return s.length>n ? s.slice(0,n-1)+'…' : s; }
 
-async function fetchStats() {
-  try {
-    const res = await fetch('/api/stats');
-    const data = await res.json();
-    document.getElementById('s-total').textContent = data.total_persons;
-    document.getElementById('s-unv').textContent = data.by_status.unverified || 0;
-    document.getElementById('s-conf').textContent = data.by_status.confirmed || 0;
-    document.getElementById('s-multi').textContent = data.by_status.multi_view || 0;
-    document.getElementById('s-ghost').textContent = data.by_status.ghost || 0;
-    document.getElementById('s-emb').textContent = data.total_embeddings;
-    document.getElementById('s-pm').textContent = data.pending_merges;
-    document.getElementById('uts').textContent = data.uptime_seconds + 's';
-  } catch (e) { console.error('Stats error:', e); }
-}
-
-async function fetchPersons() {
-  const status = document.getElementById('pstatus').value;
-  const cam = document.getElementById('pcam').value;
-  const search = document.getElementById('psearch').value;
-  let url = `/api/persons?limit=100`;
-  if (status) url += `&status=${status}`;
-  if (cam) url += `&cam=${cam}`;
-  if (search) url += `&search=${search}`;
-  
-  try {
-    const res = await fetch(url);
-    const data = await res.json();
-    persons = data.persons;
-    renderPersons();
-  } catch (e) { console.error('Persons error:', e); }
+// ── Stats ──
+async function fetchStats(){
+  try{
+    const d = await (await fetch('/api/stats')).json();
+    $('s-total').textContent = d.total_persons ?? 0;
+    $('s-conf').textContent  = (d.by_status&&d.by_status.confirmed)||0;
+    $('s-multi').textContent = (d.by_status&&d.by_status.multi_view)||0;
+    $('s-ghost').textContent = (d.by_status&&d.by_status.ghost)||0;
+    $('s-emb').textContent   = d.total_embeddings ?? 0;
+    $('s-face').textContent  = d.total_face_embeddings ?? 0;
+    $('s-desc').textContent  = d.total_descriptions ?? 0;
+    $('s-named').textContent = d.named_persons ?? 0;
+    $('s-cams').textContent  = d.total_cameras ?? 0;
+    $('s-pm').textContent    = d.pending_merges ?? 0;
+    $('s-vio').textContent   = d.violence_events ?? 0;
+    $('uts').textContent     = (d.uptime_seconds ?? 0) + 's';
+  }catch(e){ console.error('stats',e); }
 }
 
-function renderPersons() {
-  const tbody = document.getElementById('ptbl');
-  tbody.innerHTML = persons.map(p => `
-    <tr onclick="showDetail('${p.person_id}')" class="${selectedPersonId === p.person_id ? 'sel' : ''}">
-      <td>${p.snapshot_paths.length ? `<img src="/api/snapshot_by_path?path=${encodeURIComponent(p.snapshot_paths[0])}" class="th">` : '<div class="thp">NO<br>IMG</div>'}</td>
-      <td class="pid">${p.person_id.substring(0,8)}...</td>
+// ── Overview / analytics ──
+function bars(obj, opts){
+  opts = opts || {};
+  const entries = Object.entries(obj||{});
+  if(!entries.length) return '<div class="empty">No data yet</div>';
+  if(opts.sortNum) entries.sort((a,b)=>Number(a[0])-Number(b[0]));
+  else if(!opts.keepOrder) entries.sort((a,b)=>b[1]-a[1]);
+  const max = Math.max(...entries.map(e=>e[1]), 1);
+  return '<div class="bars">'+entries.map(([k,v])=>`
+    <div class="bar"><div class="bl" title="${esc(k)}">${esc(opts.prefix?opts.prefix+k:k)}</div>
+      <div class="bw"><div class="bf" style="width:${(v/max*100).toFixed(1)}%"></div></div>
+      <div class="bv">${v}</div></div>`).join('')+'</div>';
+}
+function chartCard(title,total,inner){
+  return `<div class="chart"><h3>${title}${total!=null?`<span class="cnt">${total}</span>`:''}</h3>${inner}</div>`;
+}
+async function fetchAnalytics(){
+  let a;
+  try{ a = await (await fetch('/api/analytics')).json(); }catch(e){ return; }
+  // KPI cards
+  const emb=a.embeddings||{body:0,face:0}, desc=a.descriptions||{described:0,undescribed:0};
+  const totalP=(desc.described||0)+(desc.undescribed||0);
+  const sumv=o=>Object.values(o||{}).reduce((x,y)=>x+y,0);
+  $('cards').innerHTML = [
+    ['Persons',totalP,'acc'],['Confirmed',(a.by_status&&a.by_status.confirmed)||0,'ok'],
+    ['Described',desc.described||0,'bl'],['Body Emb',emb.body||0,'pk'],
+    ['Face Emb',emb.face||0,'acc'],['Cameras',Object.keys(a.sightings_by_camera||{}).length,'warn'],
+  ].map(([l,v,c])=>`<div class="kc ${c}"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+  // populate persons filter dropdowns from analytics keys
+  fillFilter('pgender', a.by_gender); fillFilter('page', a.by_age_range);
+  fillFilter('peth', a.by_ethnicity); fillFilter('pglasses', a.by_glasses);
+  // charts
+  $('charts').innerHTML =
+    chartCard('Status', sumv(a.by_status), bars(a.by_status)) +
+    chartCard('Persons by last-seen camera', null, bars(a.by_camera,{prefix:'cam ',sortNum:true})) +
+    chartCard('Sightings by camera', sumv(a.sightings_by_camera), bars(a.sightings_by_camera,{prefix:'cam ',sortNum:true})) +
+    chartCard('Gender', null, bars(a.by_gender)) +
+    chartCard('Age range', null, bars(a.by_age_range)) +
+    chartCard('Ethnicity', null, bars(a.by_ethnicity)) +
+    chartCard('Glasses', null, bars(a.by_glasses)) +
+    chartCard('Gallery size', null, bars(a.gallery_hist,{prefix:'',sortNum:true})) +
+    chartCard('Body vs Face embeddings', null, bars({body:emb.body||0,face:emb.face||0})) +
+    chartCard('Description coverage', null, bars({described:desc.described||0,undescribed:desc.undescribed||0})) +
+    chartCard('New persons over time', null, bars(a.persons_over_time,{keepOrder:true,prefix:''}));
+}
+function fillFilter(id, obj){
+  const sel=$(id); if(!sel||!obj) return;
+  const cur=sel.value;
+  const base=sel.options[0].outerHTML;
+  const keys=Object.keys(obj).filter(k=>k!=='unknown').sort();
+  sel.innerHTML = base + keys.map(k=>`<option>${esc(k)}</option>`).join('');
+  sel.value=cur;
+}
+
+// ── Persons ──
+function attrBadges(p){
+  let s='';
+  if(p.gender)    s+=`<span class="ab b-gender">${esc(p.gender)}</span>`;
+  if(p.age_range) s+=`<span class="ab b-age">${esc(p.age_range)}</span>`;
+  if(p.ethnicity) s+=`<span class="ab b-eth">${esc(p.ethnicity)}</span>`;
+  if(p.glasses)   s+=`<span class="ab b-gl">${esc(p.glasses)}</span>`;
+  return s || '<span class="muted">—</span>';
+}
+async function fetchPersons(){
+  const qs = new URLSearchParams({limit:'150'});
+  const map={pstatus:'status',pcam:'cam',psearch:'q',pgender:'gender',page:'age_range',
+             peth:'ethnicity',pglasses:'glasses',pface:'has_face',pdesc:'has_description',psort:'sort'};
+  for(const [el,key] of Object.entries(map)){ const v=$(el).value; if(v) qs.set(key,v); }
+  try{
+    const d = await (await fetch('/api/persons?'+qs)).json();
+    persons = d.persons||[];
+    renderPersons(d.total);
+  }catch(e){ console.error('persons',e); }
+}
+function renderPersons(total){
+  $('ptbl').innerHTML = persons.map(p=>`
+    <tr onclick="showDetail('${p.person_id}')" class="${selectedPersonId===p.person_id?'sel':''}">
+      <td>${p.snapshot_paths&&p.snapshot_paths.length?`<img src="/api/snapshot_by_path?path=${encodeURIComponent(p.snapshot_paths[0])}" class="th">`:'<div class="thp">NO<br>IMG</div>'}</td>
+      <td class="pid">${p.person_id.substring(0,8)}…</td>
+      <td>${p.name?`<span class="nm">${esc(p.name)}</span>`:'<span class="muted">—</span>'}</td>
       <td><span class="sb s-${p.status}">${p.status}</span></td>
-      <td>${fmtCam(p.first_seen_cam)} <span class="at">${fmtTime(p.first_seen_time)}</span></td>
-      <td>${fmtCam(p.last_seen_cam)} <span class="at">${fmtTime(p.last_seen_time)}</span></td>
-      <td>
-        <div class="gb">
-          <div class="bt"><div class="bf" style="width:${(p.gallery_size/10)*100}%"></div></div>
-          ${p.gallery_size}
-        </div>
-      </td>
-      <td>${(p.known_angles || []).map(a => `<span class="ach">${a}</span>`).join('')}</td>
-    </tr>
-  `).join('');
+      <td>${attrBadges(p)}</td>
+      <td class="desc-cell" title="${esc(p.description_summary||'')}">${p.description_summary?esc(trunc(p.description_summary,70)):'<span class="muted">—</span>'}</td>
+      <td>${fmtCam(p.first_seen_cam)} <span class="at">→</span> ${fmtCam(p.last_seen_cam)} <span class="at">${fmtTime(p.last_seen_time)}</span></td>
+      <td><div class="gb"><div class="bt"><div class="bf2" style="width:${(p.gallery_size/10)*100}%"></div></div>${p.gallery_size}</div></td>
+      <td>${p.face_count?`<span class="facechip">${p.face_count}</span>`:'<span class="muted">—</span>'}</td>
+    </tr>`).join('') || `<tr><td colspan="9" class="empty">No persons match the filters.</td></tr>`;
 }
 
-async function fetchActivity() {
-  try {
-    const res = await fetch(`/api/activity_log?since_seconds=120`);
-    const data = await res.json();
-    const list = document.getElementById('alist');
-    const existing = Array.from(list.children).map(c => c.dataset.id);
-    
-    data.events.forEach(e => {
-      const id = `${e.type}-${e.person_id || e.merge_id}-${e.time}`;
-      if (!existing.includes(id)) {
-        const div = document.createElement('div');
-        div.className = `ai ${e.type}`;
-        div.dataset.id = id;
-        div.onclick = () => e.person_id && showDetail(e.person_id);
-        div.innerHTML = `
-          <div class="at">${fmtTime(e.time)} <span class="atp">${e.type}</span></div>
-          <div class="am">${e.message}</div>
-          ${e.person_id ? `<div class="ap">${e.person_id.substring(0,12)}...</div>` : ''}
-        `;
-        list.prepend(div);
-      }
-    });
-    // Keep only last 50
-    while (list.children.length > 50) list.lastChild.remove();
-  } catch (e) { console.error('Activity error:', e); }
-}
-
-async function fetchCameras() {
-  try {
-    const res = await fetch('/api/cameras');
-    const data = await res.json();
-    const sel = document.getElementById('pcam');
-    const current = sel.value;
-    sel.innerHTML = '<option value="">All Cameras</option>' + 
-      data.cameras.map(c => `<option value="${c}">Camera ${c}</option>`).join('');
-    sel.value = current;
-  } catch (e) { console.error('Cameras error:', e); }
-}
-
-async function showDetail(id) {
-  selectedPersonId = id;
-  renderPersons();
-  const dp = document.getElementById('dp');
-  dp.classList.add('open');
-  
-  try {
-    const [pRes, sRes, eRes, vRes] = await Promise.all([
-      fetch(`/api/persons/${id}`),
-      fetch(`/api/persons/${id}/snapshots`),
-      fetch(`/api/embeddings/${id}`),
-      fetch(`/api/embedding_vectors/${id}`)
+// ── Detail ──
+async function showDetail(id){
+  selectedPersonId=id; renderPersons();
+  $('dp').classList.add('open');
+  try{
+    const [p,s,e,v,desc,face,hist] = await Promise.all([
+      fetch(`/api/persons/${id}`).then(r=>r.json()),
+      fetch(`/api/persons/${id}/snapshots`).then(r=>r.json()),
+      fetch(`/api/embeddings/${id}`).then(r=>r.json()),
+      fetch(`/api/embedding_vectors/${id}`).then(r=>r.json()),
+      fetch(`/api/persons/${id}/description`).then(r=>r.json()),
+      fetch(`/api/persons/${id}/face_embeddings`).then(r=>r.json()),
+      fetch(`/api/camera_history/${id}`).then(r=>r.json()),
     ]);
-    const p = await pRes.json();
-    const s = await sRes.json();
-    const e = await eRes.json();
-    const v = await vRes.json();
-    
-    document.getElementById('d-pid').textContent = p.person_id;
-    document.getElementById('d-meta').textContent = `Created: ${(p.created_at||'').replace('T',' ')} | Gallery: ${p.gallery_size}/10`;
-    
-    const sgrid = document.getElementById('sgrid');
-    sgrid.innerHTML = s.snapshot_paths.map(path => 
-      `<img src="/api/snapshot_by_path?path=${encodeURIComponent(path)}" onclick="openLb(this.src)">`
-    ).join('');
-    
-    const etbl = document.getElementById('etbl-body');
-    etbl.innerHTML = e.embeddings.map(em => `
-      <tr>
-        <td>${em.id}</td>
-        <td>${em.embedding_type}</td>
-        <td><span class="ach">${em.angle_tag}</span></td>
-        <td>cam${em.source_cam}</td>
-        <td class="at">${em.captured_at.split('T')[1]}</td>
-        <td>${em.vector_dims}</td>
-        <td class="${em.vector_norm > 0.9 && em.vector_norm < 1.1 ? 'nok' : 'nbd'}">${em.vector_norm}</td>
-        <td class="vp">${em.vector_preview.map(n => n.toFixed(3)).join(', ')}...</td>
-      </tr>
-    `).join('');
-    
-    renderPCA(v.points);
-  } catch (err) { console.error('Detail error:', err); }
-}
+    $('d-pid').textContent = (p.name?p.name+'  ·  ':'') + p.person_id;
+    $('d-meta').textContent = `Created ${(p.created_at||'').replace('T',' ')} · Gallery ${p.gallery_size}/10 · Status ${p.status}`;
+    $('d-prof').innerHTML = attrBadges(p) + (p.name?`<span class="ab b-gender">★ ${esc(p.name)}</span>`:'');
 
-function renderPCA(points) {
-  const canvas = document.getElementById('pca');
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width = canvas.offsetWidth;
-  const h = canvas.height = canvas.offsetHeight;
-  ctx.clearRect(0, 0, w, h);
-  if (!points.length) return;
-  
-  const xs = points.map(p => p.x);
-  const ys = points.map(p => p.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const pad = 20;
-  
-  points.forEach(p => {
-    const x = pad + (p.x - minX) / (maxX - minX || 1) * (w - 2 * pad);
-    const y = h - (pad + (p.y - minY) / (maxY - minY || 1) * (h - 2 * pad));
-    ctx.beginPath();
-    ctx.arc(x, y, 4, 0, Math.PI * 2);
-    ctx.fillStyle = p.type === 'face' ? '#06b6d4' : '#7c3aed';
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.strokeWidth = 1;
-    ctx.stroke();
+    $('sgrid').innerHTML = (s.snapshot_paths||[]).map(path=>
+      `<img src="/api/snapshot_by_path?path=${encodeURIComponent(path)}" onclick="openImg(this.src)">`).join('')
+      || '<span class="muted">No snapshots</span>';
+
+    // description
+    const latest = (desc.descriptions||[]).find(x=>x.is_latest) || (desc.descriptions||[])[0];
+    if(latest){
+      const at = latest.attributes||{};
+      const aHtml = Object.entries(at).filter(([k,val])=>val!=null&&val!==''&&val!=='unknown')
+        .map(([k,val])=>`<div class="a"><div class="k">${esc(k)}</div><div class="v">${esc(Array.isArray(val)?val.join(', '):val)}</div></div>`).join('');
+      $('d-desc').innerHTML = `<div class="summary">${esc(latest.summary||'(no summary)')}</div>`+
+        (aHtml?`<div class="attrs">${aHtml}</div>`:'')+
+        `<div class="at" style="margin-top:5px">${esc(latest.backend||'')} ${esc(latest.model_id||'')} · ${(desc.descriptions||[]).length} version(s)</div>`;
+    } else {
+      $('d-desc').innerHTML = '<span class="muted">No description yet — run <code>--phase 4 --describe-all</code>.</span>';
+    }
+
+    // body embeddings
+    $('etbl-body').innerHTML = (e.embeddings||[]).map(em=>`
+      <tr><td>${em.id}</td><td>${em.embedding_type}</td><td><span class="ach">${em.angle_tag}</span></td>
+      <td>cam${em.source_cam}</td><td class="at">${fmtTime(em.captured_at)}</td>
+      <td class="${em.vector_norm>0.9&&em.vector_norm<1.1?'nok':'nbd'}">${em.vector_norm}</td></tr>`).join('')
+      || '<tr><td colspan="6" class="muted">none</td></tr>';
+    renderPCA(v.points);
+
+    // face embeddings
+    $('d-facecount').textContent = face.count||0;
+    $('facetbl-body').innerHTML = (face.face_embeddings||[]).map(f=>`
+      <tr><td>${f.id}</td><td>cam${f.source_cam}</td><td class="at">${fmtTime(f.captured_at)}</td>
+      <td class="${f.vector_norm>0.9&&f.vector_norm<1.1?'nok':'nbd'}">${f.vector_norm}</td></tr>`).join('')
+      || '<tr><td colspan="4" class="muted">No face embeddings (face analysis off or no face seen)</td></tr>';
+
+    // timeline
+    $('d-timeline').innerHTML = (hist.history||[]).map(h=>`
+      <div class="ev"><div>${fmtCam(h.cam_id)} · track ${h.track_id}</div>
+      <div class="tc">${fmtTime(h.first_seen)} → ${fmtTime(h.last_seen)}</div></div>`).join('')
+      || '<span class="muted">No camera history</span>';
+  }catch(err){ console.error('detail',err); }
+}
+function renderPCA(points){
+  const c=$('pca'), ctx=c.getContext('2d');
+  const w=c.width=c.offsetWidth, h=c.height=c.offsetHeight;
+  ctx.clearRect(0,0,w,h);
+  if(!points||!points.length) return;
+  const xs=points.map(p=>p.x), ys=points.map(p=>p.y);
+  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys),pad=18;
+  points.forEach(p=>{
+    const x=pad+(p.x-minX)/(maxX-minX||1)*(w-2*pad);
+    const y=h-(pad+(p.y-minY)/(maxY-minY||1)*(h-2*pad));
+    ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);
+    ctx.fillStyle=p.type==='face'?'#06b6d4':'#7c3aed';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.stroke();
   });
 }
 
-async function fetchMerges() {
-  try {
-    const res = await fetch('/api/merge_proposals');
-    const data = await res.json();
-    const wrap = document.getElementById('merges-t');
-    wrap.innerHTML = data.proposals.map(m => `
+// ── Merges ──
+async function fetchMerges(){
+  try{
+    const d=await (await fetch('/api/merge_proposals')).json();
+    $('merges-t').innerHTML = d.proposals.map(m=>`
       <div class="mc">
-        <div class="mp">
-          ${m.person_id_a_thumb ? `<img src="/api/snapshot_by_path?path=${encodeURIComponent(m.person_id_a_thumb)}">` : '<div class="thp">?</div>'}
-          <div class="pid">${m.person_id_a.substring(0,8)}</div>
-        </div>
-        <div class="ss ${m.similarity > 0.95 ? 'ssh' : m.similarity > 0.88 ? 'ssm' : 'ssl'}">${(m.similarity * 100).toFixed(1)}%</div>
-        <div class="mp">
-          ${m.person_id_b_thumb ? `<img src="/api/snapshot_by_path?path=${encodeURIComponent(m.person_id_b_thumb)}">` : '<div class="thp">?</div>'}
-          <div class="pid">${m.person_id_b.substring(0,8)}</div>
-        </div>
+        <div class="mp">${m.person_id_a_thumb?`<img src="/api/snapshot_by_path?path=${encodeURIComponent(m.person_id_a_thumb)}" onclick="openImg(this.src)">`:'<div class="thp">?</div>'}<div class="pid">${m.person_id_a.substring(0,8)}</div></div>
+        <div class="ss ${m.similarity>0.95?'ssh':m.similarity>0.88?'ssm':'ssl'}">${(m.similarity*100).toFixed(1)}%</div>
+        <div class="mp">${m.person_id_b_thumb?`<img src="/api/snapshot_by_path?path=${encodeURIComponent(m.person_id_b_thumb)}" onclick="openImg(this.src)">`:'<div class="thp">?</div>'}<div class="pid">${m.person_id_b.substring(0,8)}</div></div>
         <div class="ms"><span class="sb s-${m.status}">${m.status}</span></div>
-      </div>
-    `).join('');
-  } catch (e) { console.error('Merges error:', e); }
+      </div>`).join('') || '<div class="empty">No merge proposals.</div>';
+  }catch(e){ console.error('merges',e); }
 }
 
-async function fetchRegistry() {
-  try {
-    const res = await fetch('/api/track_registry');
-    const data = await res.json();
-    const body = document.getElementById('reg-body');
-    body.innerHTML = data.tracks.map(t => `
-      <tr>
-        <td>cam${t.cam_id}</td>
-        <td>${t.track_id}</td>
-        <td class="pid">${t.person_id}</td>
-        <td><span class="sb s-${t.person_status}">${t.person_status}</span></td>
-      </tr>
-    `).join('');
-  } catch (e) { console.error('Registry error:', e); }
+// ── Violence ──
+async function fetchViolence(){
+  try{
+    const d=await (await fetch('/api/violence')).json();
+    const s=d.summary||{};
+    $('vio-sum').innerHTML =
+      `<div class="sc">Events <b>${s.total||0}</b></div>`+
+      `<div class="sc danger">Violence <b>${s.violence||0}</b></div>`+
+      `<div class="sc warn">Suspicious <b>${s.suspicious||0}</b></div>`;
+    $('vio-list').innerHTML = (d.events||[]).map(e=>{
+      const lvl=e.level||'SUSPICIOUS';
+      const img=e.snapshot?`<img src="/api/alert_media?path=${encodeURIComponent(e.snapshot)}" onclick="openImg('/api/alert_media?path=${encodeURIComponent(e.snapshot)}')">`:'';
+      const clip=e.clip?`<a href="#" onclick="openVid('/api/alert_media?path=${encodeURIComponent(e.clip)}');return false;">▶ clip</a>`:'';
+      return `<div class="vi ${lvl}"><div class="vl">${lvl}</div>
+        <div class="vmeta">${esc(e.timestamp||'')} · ${fmtCam(e.cam_id)}</div>
+        <div class="vscore">${e.score!=null?Number(e.score).toFixed(2):'—'}</div>${clip}${img}</div>`;
+    }).join('') || '<div class="empty">No violence events logged (feature off or none detected).</div>';
+  }catch(e){ console.error('violence',e); }
 }
 
-function showTab(id, el) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tcon').forEach(c => c.classList.remove('active'));
-  el.classList.add('active');
-  document.getElementById(id).classList.add('active');
-  if (id === 'merges') fetchMerges();
-  if (id === 'registry') fetchRegistry();
+// ── Registry ──
+async function fetchRegistry(){
+  try{
+    const d=await (await fetch('/api/track_registry')).json();
+    $('reg-body').innerHTML = d.tracks.map(t=>`
+      <tr><td>cam${t.cam_id}</td><td>${t.track_id}</td><td class="pid">${t.person_id}</td>
+      <td><span class="sb s-${t.person_status}">${t.person_status}</span></td></tr>`).join('')
+      || '<tr><td colspan="4" class="empty">Registry empty — Phase 2 not running?</td></tr>';
+  }catch(e){ console.error('registry',e); }
 }
 
-function closeDetail() { document.getElementById('dp').classList.remove('open'); selectedPersonId = null; renderPersons(); }
-function openLb(src) { document.getElementById('lb-img').src = src; document.getElementById('lb').classList.add('show'); }
-function closeLb() { document.getElementById('lb').classList.remove('show'); }
-function filterPersons() { fetchPersons(); }
-
-function init() {
-  fetchStats(); fetchPersons(); fetchActivity(); fetchCameras();
-  setInterval(() => {
-    fetchStats();
-    fetchActivity();
-    if (document.getElementById('persons').classList.contains('active')) fetchPersons();
-    if (document.getElementById('merges').classList.contains('active')) fetchMerges();
-    if (document.getElementById('registry').classList.contains('active')) fetchRegistry();
-  }, 2000);
+// ── Activity ──
+async function fetchActivity(){
+  try{
+    const d=await (await fetch('/api/activity_log?since_seconds=120')).json();
+    const list=$('alist');
+    const existing=Array.from(list.children).map(c=>c.dataset.id);
+    d.events.forEach(e=>{
+      const id=`${e.type}-${e.person_id||e.merge_id}-${e.time}`;
+      if(!existing.includes(id)){
+        const div=document.createElement('div');
+        div.className=`ai ${e.type}`; div.dataset.id=id;
+        div.onclick=()=>e.person_id&&(showTab('persons',document.querySelectorAll('.tab')[1]),showDetail(e.person_id));
+        div.innerHTML=`<div class="at">${fmtTime(e.time)} <span class="atp">${e.type}</span></div>
+          <div class="am">${esc(e.message)}</div>
+          ${e.person_id?`<div class="ap">${e.person_id.substring(0,12)}…</div>`:''}`;
+        list.prepend(div);
+      }
+    });
+    while(list.children.length>50) list.lastChild.remove();
+  }catch(e){ console.error('activity',e); }
 }
 
-window.onload = init;
+// ── Export ──
+function exportData(fmt){
+  if(!persons.length){ toast('Nothing to export'); return; }
+  const cols=['person_id','name','status','gender','age_range','ethnicity','glasses',
+              'first_seen_cam','last_seen_cam','last_seen_time','gallery_size','face_count','description_summary'];
+  let blob;
+  if(fmt==='csv'){
+    const head=cols.join(',');
+    const rows=persons.map(p=>cols.map(c=>`"${String(p[c]??'').replace(/"/g,'""')}"`).join(','));
+    blob=new Blob([head+'\n'+rows.join('\n')],{type:'text/csv'});
+  } else {
+    blob=new Blob([JSON.stringify(persons,null,2)],{type:'application/json'});
+  }
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=`surveillant_persons.${fmt}`; a.click();
+  toast(`Exported ${persons.length} persons (${fmt.toUpperCase()})`);
+}
+
+// ── UI helpers ──
+function showTab(id,el){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tcon').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active'); $(id).classList.add('active');
+  if(id==='overview') fetchAnalytics();
+  if(id==='persons') fetchPersons();
+  if(id==='merges') fetchMerges();
+  if(id==='violence') fetchViolence();
+  if(id==='registry') fetchRegistry();
+}
+function closeDetail(){ $('dp').classList.remove('open'); selectedPersonId=null; renderPersons(); }
+function openImg(src){ $('lb-content').innerHTML=`<img src="${src}">`; $('lb').classList.add('show'); }
+function openVid(src){ $('lb-content').innerHTML=`<video src="${src}" controls autoplay></video>`; $('lb').classList.add('show'); }
+function closeLb(){ $('lb').classList.remove('show'); $('lb-content').innerHTML=''; }
+function filterPersons(){ fetchPersons(); }
+function debouncedFilter(){ clearTimeout(filterTimer); filterTimer=setTimeout(fetchPersons,300); }
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeLb(); closeDetail(); }});
+
+function activeTab(){ const a=document.querySelector('.tcon.active'); return a?a.id:''; }
+function init(){
+  fetchStats(); fetchActivity(); fetchAnalytics();
+  setInterval(()=>{
+    fetchStats(); fetchActivity();
+    const t=activeTab();
+    if(t==='overview') fetchAnalytics();
+    if(t==='persons') fetchPersons();
+    if(t==='merges') fetchMerges();
+    if(t==='violence') fetchViolence();
+    if(t==='registry') fetchRegistry();
+  },2500);
+}
+window.onload=init;
 </script>
 </body>
 </html>

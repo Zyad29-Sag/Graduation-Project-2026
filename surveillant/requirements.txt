@@ -9,9 +9,14 @@ ultralytics==8.2.0
 # Tracking
 deep-sort-realtime==1.3.2
 
-# Embedding  (Phase 2)
-insightface==0.7.3
-onnxruntime==1.18.0
+# Face analysis  (Part 11 — FaceAnalyzer + face-image search)
+# buffalo_l auto-downloads on first use. Optional at runtime: face analysis is
+# gated by ENABLE_FACE_ANALYSIS and degrades gracefully if these are absent.
+# Pinned to the versions that install + run on Python 3.12 (0.7.3 has no 3.12
+# wheel and tries to build from source). buffalo_l ONNX models are version-
+# independent, so these run the team's face pipeline unchanged.
+insightface==1.0.1
+onnxruntime==1.27.0
 
 # Storage  (Phase 2)
 SQLAlchemy==2.0.30

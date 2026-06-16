@@ -80,6 +80,9 @@ class Database:
                     description            TEXT,
                     gender                 TEXT,
                     age_range              TEXT,
+                    name                   TEXT,
+                    ethnicity              TEXT,
+                    glasses                TEXT,
                     snapshot_paths         TEXT DEFAULT '[]',
                     latest_description_id  INTEGER,
                     created_at             TEXT NOT NULL
@@ -93,6 +96,22 @@ class Database:
                     angle_tag       TEXT DEFAULT 'unknown',
                     source_cam      INTEGER,
                     captured_at     TEXT NOT NULL,
+                    FOREIGN KEY (person_id) REFERENCES persons(person_id)
+                );
+
+                -- ── Part 11 — ISOLATED face store ──────────────────────────
+                -- Face embeddings (InsightFace, 512-d) live HERE, never in
+                -- person_embeddings. Both are 512-d, and the body searcher /
+                -- FAISS / reconciliation pool by DIMENSION (not embedding_type),
+                -- so mixing face vectors into person_embeddings would corrupt
+                -- body identity. This table is read only by FaceSearcher and the
+                -- "returning face" check — the body identity path never sees it.
+                CREATE TABLE IF NOT EXISTS face_embeddings (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    person_id    TEXT NOT NULL,
+                    embedding    BLOB NOT NULL,
+                    source_cam   INTEGER,
+                    captured_at  TEXT NOT NULL,
                     FOREIGN KEY (person_id) REFERENCES persons(person_id)
                 );
 
@@ -151,6 +170,8 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_gallery_pid
                     ON person_embeddings(person_id);
+                CREATE INDEX IF NOT EXISTS idx_face_pid
+                    ON face_embeddings(person_id);
                 CREATE INDEX IF NOT EXISTS idx_cam_history_pid
                     ON camera_history(person_id);
                 CREATE INDEX IF NOT EXISTS idx_desc_pid
@@ -173,6 +194,10 @@ class Database:
             "ALTER TABLE persons ADD COLUMN known_angles TEXT DEFAULT '[]'",
             "ALTER TABLE persons ADD COLUMN last_gallery_update TEXT",
             "ALTER TABLE person_embeddings ADD COLUMN source_cam INTEGER",
+            # Part 11 — face attributes (additive, merged from team branch)
+            "ALTER TABLE persons ADD COLUMN name TEXT",
+            "ALTER TABLE persons ADD COLUMN ethnicity TEXT",
+            "ALTER TABLE persons ADD COLUMN glasses TEXT",
             # Part 10 — Phase 4 LLM description
             "ALTER TABLE persons ADD COLUMN latest_description_id INTEGER",
             # Phase 4B — semantic search: float32 embedding of long_description
@@ -186,6 +211,14 @@ class Database:
                     pass  # column already exists
             # Ensure Part-10 tables exist on legacy DBs
             for ddl in (
+                """CREATE TABLE IF NOT EXISTS face_embeddings (
+                       id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                       person_id    TEXT NOT NULL,
+                       embedding    BLOB NOT NULL,
+                       source_cam   INTEGER,
+                       captured_at  TEXT NOT NULL,
+                       FOREIGN KEY (person_id) REFERENCES persons(person_id)
+                   )""",
                 """CREATE TABLE IF NOT EXISTS person_descriptions (
                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
                        person_id       TEXT NOT NULL,
@@ -209,6 +242,7 @@ class Database:
                    )""",
                 "CREATE INDEX IF NOT EXISTS idx_desc_pid ON person_descriptions(person_id)",
                 "CREATE INDEX IF NOT EXISTS idx_descq_status ON description_queue(status)",
+                "CREATE INDEX IF NOT EXISTS idx_face_pid ON face_embeddings(person_id)",
             ):
                 try:
                     conn.execute(ddl)
@@ -487,6 +521,75 @@ class Database:
         for pid, emb_bytes in rows:
             galleries.setdefault(pid, []).append(np.frombuffer(emb_bytes, dtype=np.float32))
         return galleries
+
+    # ------------------------------------------------------------------
+    # Public API — Face embeddings (ISOLATED face store — Part 11)
+    # ------------------------------------------------------------------
+    # Read ONLY by FaceSearcher and the "returning face" check. The body
+    # identity path (searcher / FAISS / reconciliation) never touches this
+    # table. add_face_embedding deliberately does NOT call the
+    # on_embedding_added hook, so face vectors never enter the body FAISS index.
+
+    def add_face_embedding(
+        self,
+        person_id: str,
+        embedding_bytes: bytes,
+        source_cam: int = 0,
+        captured_at: Optional[str] = None,
+    ) -> None:
+        """Append a face embedding to the isolated face_embeddings table."""
+        now = captured_at or datetime.datetime.now().isoformat()
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO face_embeddings (person_id, embedding, source_cam, captured_at) "
+                "VALUES (?, ?, ?, ?)",
+                (person_id, embedding_bytes, source_cam, now),
+            )
+            if self._in_memory:
+                conn.commit()
+
+    def get_all_face_embeddings(self) -> Dict[str, List[np.ndarray]]:
+        """Return {person_id: [face_vec, ...]} from the isolated face store."""
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT person_id, embedding FROM face_embeddings ORDER BY person_id, id ASC"
+            )
+            rows = cursor.fetchall()
+        out: Dict[str, List[np.ndarray]] = {}
+        for pid, emb_bytes in rows:
+            out.setdefault(pid, []).append(np.frombuffer(emb_bytes, dtype=np.float32))
+        return out
+
+    def update_person_attributes(
+        self,
+        person_id: str,
+        name: Optional[str] = None,
+        gender: Optional[str] = None,
+        age_range: Optional[str] = None,
+        ethnicity: Optional[str] = None,
+        glasses: Optional[str] = None,
+    ) -> None:
+        """
+        Update face-derived display attributes on the persons row.
+
+        Only non-None fields are written, so a later partial update never
+        clobbers an earlier good value with NULL. Independent of the LLM
+        describer's update_description() — they write different columns and
+        never fight.
+        """
+        fields = {
+            "name": name, "gender": gender, "age_range": age_range,
+            "ethnicity": ethnicity, "glasses": glasses,
+        }
+        sets = [(k, v) for k, v in fields.items() if v is not None]
+        if not sets:
+            return
+        clause = ", ".join(f"{k}=?" for k, _ in sets)
+        params = [v for _, v in sets] + [person_id]
+        with self._get_conn() as conn:
+            conn.execute(f"UPDATE persons SET {clause} WHERE person_id=?", params)
+            if self._in_memory:
+                conn.commit()
 
     # ------------------------------------------------------------------
     # Public API — Camera History
