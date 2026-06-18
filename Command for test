@@ -23,3 +23,9 @@ python debug_dashboard.py
 ython main.py --phase 2 --set set_1                          # tracking (lean, fast)
 python main.py --phase 4 --describe-all                       # describe new people
 python main.py --phase 4 --search-text "your description" 
+
+
+
+python -m webapp.api.seed_demo                    # one-time
+uvicorn webapp.api.main:app --port 8000           # API  (docs at /docs)
+cd webapp/web && npm run dev                       # dashboard at :5173

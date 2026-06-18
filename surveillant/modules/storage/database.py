@@ -1094,6 +1094,130 @@ class Database:
         return moved
 
     # ------------------------------------------------------------------
+    # Public API — Web corrections (delete / split) + selection metadata
+    # ------------------------------------------------------------------
+    # Added for the web dashboard's correction tools. delete_person and
+    # split_person operate on SQLite in a SINGLE transaction (mirroring
+    # merge_persons). They deliberately do NOT fire on_embedding_added /
+    # on_merge — identity-mutating web corrections rebuild FAISS from SQLite
+    # afterward (SQLite is the source of truth, invariant #4). The two
+    # *_meta/_rows readers expose primary-key ids (NOT vectors) so a UI can
+    # pick exactly which embeddings / sightings to peel off in a split.
+
+    def get_gallery_entries_meta(self, person_id: str) -> List[Dict[str, Any]]:
+        """Per-embedding metadata (no vectors) for split selection."""
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, embedding_type, angle_tag, source_cam, captured_at "
+                "FROM person_embeddings WHERE person_id=? ORDER BY id ASC",
+                (person_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_camera_history_rows(self, person_id: str) -> List[Dict[str, Any]]:
+        """camera_history rows WITH their primary-key id (for split selection)."""
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, cam_id, track_id, first_seen, last_seen "
+                "FROM camera_history WHERE person_id=? ORDER BY id ASC",
+                (person_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_person(self, person_id: str) -> bool:
+        """Delete a person and ALL their rows (embeddings, face vectors, camera
+        history, descriptions, queue rows); resolve any pending merge proposals
+        referencing them. Returns True if a person was removed. The web layer
+        also removes the snapshot folder and rebuilds FAISS."""
+        now = datetime.datetime.now().isoformat()
+        with self._get_conn() as conn:
+            if not conn.execute(
+                "SELECT 1 FROM persons WHERE person_id=?", (person_id,)
+            ).fetchone():
+                return False
+            conn.execute("DELETE FROM person_embeddings WHERE person_id=?", (person_id,))
+            conn.execute("DELETE FROM face_embeddings WHERE person_id=?", (person_id,))
+            conn.execute("DELETE FROM camera_history WHERE person_id=?", (person_id,))
+            conn.execute("DELETE FROM person_descriptions WHERE person_id=?", (person_id,))
+            conn.execute("DELETE FROM description_queue WHERE person_id=?", (person_id,))
+            conn.execute(
+                "UPDATE merge_proposals SET status='resolved', resolved_at=? "
+                "WHERE status='pending' AND (person_id_a=? OR person_id_b=?)",
+                (now, person_id, person_id),
+            )
+            conn.execute("DELETE FROM persons WHERE person_id=?", (person_id,))
+            if self._in_memory:
+                conn.commit()
+        return True
+
+    def split_person(
+        self,
+        person_id: str,
+        embedding_ids: List[int],
+        history_ids: Optional[List[int]] = None,
+        new_person_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Peel a subset of a person's gallery embeddings (and optionally
+        camera_history rows) into a NEW person_id — the fix for "two people
+        fused into one". Recomputes gallery_size + known_angles for both sides.
+        Returns the new person_id, or None if the source is missing or nothing
+        was selected. The web layer rebuilds FAISS afterward."""
+        history_ids = history_ids or []
+        if not embedding_ids and not history_ids:
+            return None
+        new_id = new_person_id or str(uuid.uuid4())
+        now = datetime.datetime.now().isoformat()
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            src = conn.execute(
+                "SELECT * FROM persons WHERE person_id=?", (person_id,)
+            ).fetchone()
+            if not src:
+                return None
+            conn.execute(
+                """INSERT INTO persons
+                   (person_id, first_seen_cam, first_seen_time, last_seen_cam,
+                    last_seen_time, status, gallery_size, known_angles,
+                    snapshot_paths, created_at, gender, age_range, name,
+                    ethnicity, glasses)
+                   VALUES (?, ?, ?, ?, ?, 'unverified', 0, '[]', '[]', ?, ?, ?, ?, ?, ?)""",
+                (new_id, src["first_seen_cam"], src["first_seen_time"],
+                 src["last_seen_cam"], src["last_seen_time"], now,
+                 src["gender"], src["age_range"], src["name"],
+                 src["ethnicity"], src["glasses"]),
+            )
+            if embedding_ids:
+                marks = ",".join("?" * len(embedding_ids))
+                conn.execute(
+                    f"UPDATE person_embeddings SET person_id=? "
+                    f"WHERE person_id=? AND id IN ({marks})",
+                    [new_id, person_id, *embedding_ids],
+                )
+            if history_ids:
+                marks = ",".join("?" * len(history_ids))
+                conn.execute(
+                    f"UPDATE camera_history SET person_id=? "
+                    f"WHERE person_id=? AND id IN ({marks})",
+                    [new_id, person_id, *history_ids],
+                )
+            # Recompute denormalised gallery_size + known_angles on both sides.
+            for pid in (person_id, new_id):
+                grows = conn.execute(
+                    "SELECT angle_tag FROM person_embeddings WHERE person_id=?",
+                    (pid,),
+                ).fetchall()
+                angles = sorted({r[0] for r in grows if r[0] and r[0] != "initial"})
+                conn.execute(
+                    "UPDATE persons SET gallery_size=?, known_angles=? WHERE person_id=?",
+                    (len(grows), json.dumps(angles), pid),
+                )
+            if self._in_memory:
+                conn.commit()
+        return new_id
+
+    # ------------------------------------------------------------------
     # Legacy compatibility
     # ------------------------------------------------------------------
 

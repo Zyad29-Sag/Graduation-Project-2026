@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.env
+.venv/
+
+# Seeded demo data (regenerate with: python -m webapp.api.seed_demo)
+api/data/
+
+# Node / frontend
+web/node_modules/
+web/dist/
+web/.vite/
+
+# Misc
+.DS_Store

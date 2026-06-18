@@ -1,0 +1,7 @@
+# SURVEILLANT web API — additional deps beyond the engine's surveillant/requirements.txt
+# (fastapi, uvicorn, torch, faiss-cpu, insightface, sentence-transformers, etc. come from the engine env)
+fastapi>=0.115
+uvicorn[standard]>=0.30
+PyJWT>=2.8
+bcrypt>=4.0
+python-multipart>=0.0.9

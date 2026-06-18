@@ -15,7 +15,14 @@
       "PowerShell(Write-Output \"=== Ollama 127.0.0.1 model list ===\"; try { \\(Invoke-WebRequest \"http://127.0.0.1:11434/api/tags\" -UseBasicParsing\\).Content } catch { $_.Exception.Message })",
       "Bash(grep -aiE \"OLLAMA_MODELS|OLLAMA_HOST|\\\\\"server config\\\\\"|models dir|listening on\" \"/c/Users/zezoe/AppData/Local/Ollama/server.log\" | tail -20)",
       "PowerShell(setx OLLAMA_MODELS \"D:\\\\Ollama models\")",
-      "Bash(tail -c 1500 \"/c/Users/zezoe/AppData/Local/Temp/claude/D--college-SURVEILLANT-system/2253cc15-f945-4dea-8b2d-de09af68e82c/tasks/b1w3h1542.output\" | tr '\\\\r' '\\\\n' | grep -aE \"pulling [0-9a-f]|success|verifying|writing|error\" | tail -4)"
+      "Bash(tail -c 1500 \"/c/Users/zezoe/AppData/Local/Temp/claude/D--college-SURVEILLANT-system/2253cc15-f945-4dea-8b2d-de09af68e82c/tasks/b1w3h1542.output\" | tr '\\\\r' '\\\\n' | grep -aE \"pulling [0-9a-f]|success|verifying|writing|error\" | tail -4)",
+      "PowerShell(cd \"D:\\\\college\\\\SURVEILLANT system\"; Get-ChildItem -Directory | Where-Object { $_.Name -ne \"My college old verision\" } | Select-Object -ExpandProperty Name)",
+      "Bash(unzip -q \"Graduation-Project-2026-main.zip\")",
+      "Bash(grep -E \"\\\\.\\(md|txt\\)$\")",
+      "Bash(Get-ChildItem -File)",
+      "Bash(Select-Object -ExpandProperty Name)",
+      "PowerShell(python \"C:\\\\Users\\\\zezoe\\\\AppData\\\\Local\\\\Temp\\\\surv_dash_test.py\")",
+      "PowerShell($dest = \"C:\\\\Users\\\\zezoe\\\\Downloads\\\\_stitch_extract\"; if \\(Test-Path $dest\\) { Remove-Item -Recurse -Force $dest }; New-Item -ItemType Directory -Force $dest | Out-Null; Expand-Archive -Path \"C:\\\\Users\\\\zezoe\\\\Downloads\\\\stitch_surveillant_ai_surveillance_system.zip\" -DestinationPath \"$dest\\\\surveillant_ai\" -Force; Expand-Archive -Path \"C:\\\\Users\\\\zezoe\\\\Downloads\\\\stitch_horus_eye_academic_showcase \\(1\\).zip\" -DestinationPath \"$dest\\\\horus_eye\" -Force; Write-Output \"===== TREE =====\"; Get-ChildItem -Recurse $dest | Select-Object FullName, Length | Format-Table -AutoSize)"
     ]
   }
 }

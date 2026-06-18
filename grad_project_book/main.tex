@@ -1,0 +1,2083 @@
+\documentclass[12pt]{report}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{geometry}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{placeins}
+\usepackage{caption}
+\usepackage{textcomp}
+\usepackage{gensymb}
+\geometry{a4paper, margin=1in}
+\setlength{\headheight}{15pt}
+\addtolength{\topmargin}{-3pt}
+\usepackage[hidelinks]{hyperref}
+\usepackage{amsmath}
+\usepackage[T1]{fontenc}
+\usepackage{listings}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{longtable}
+
+% ----------- Code listing style -----------
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!10},
+  keywordstyle=\color{blue},
+  commentstyle=\color{green!60!black},
+  stringstyle=\color{red!70!black},
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  stepnumber=1,
+  tabsize=4,
+  showstringspaces=false
+}
+
+% ----------- Fancy Header Setup -----------
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\chaptermark}[1]{\markboth{\thechapter\ #1}{}}
+\fancyhead[L]{\leftmark}
+\fancyhead[R]{AI Surveillance System}
+\fancyfoot[C]{\thepage}
+
+% ----------- Chapter Formatting -----------
+\titleformat{\chapter}[display]
+  {\normalfont\bfseries\Huge}
+  {\chaptertitlename\ \thechapter}{20pt}{\Huge}
+
+\begin{document}
+
+% ============================================================
+%  TITLE PAGE
+% ============================================================
+\begin{titlepage}
+    \centering
+
+    \includegraphics[width=0.20\textwidth]{logo.png}\\[1.5cm]
+
+    {\scshape\LARGE Alexandria University \par}
+    \vspace{0.5cm}
+    {\Large Faculty of Engineering \par}
+    {\large Computer and Communications  Department \par}
+
+    \vspace{1.5cm}
+
+    {\Huge \bfseries AI-Based Intelligent Surveillance System \par}
+
+    \vspace{0.5cm}
+    {\Large \itshape Multi-Camera Person Re-Identification, Face Analysis, and Audio Intelligence for Public Security \par}
+
+    \vspace{1.5cm}
+
+    {\large \bfseries Supervised By:\par}
+    {\large Dr. Mohamed Salah\par}
+
+    \vspace{0.5cm}
+    {\large \bfseries Examined By:\par}
+    {\large Dr. Mohamed ElShimy\par}
+
+    \vspace{1.5cm}
+
+    \large \bfseries Team Members:\par
+    \vspace{0.5cm}
+
+    \begin{center}
+    \begin{tabularx}{0.9\textwidth}{X X}
+    Mohamed Sobhy         & Youssef Emad         \\    
+    Zyad Tarek Ahmed   & Berdj Youssef George \\
+    Zeiad Emad                            \\
+    \end{tabularx}
+    \end{center}
+
+    \vfill
+
+    {\large Academic Year: 2025 -- 2026 \par}
+
+\end{titlepage}
+
+% ============================================================
+%  FRONT MATTER
+% ============================================================
+\tableofcontents
+\newpage
+
+\listoffigures
+\newpage
+
+\listoftables
+\newpage
+
+% ============================================================
+%  ACKNOWLEDGMENT
+% ============================================================
+\chapter*{Acknowledgment}
+\addcontentsline{toc}{chapter}{Acknowledgment}
+
+We would like to express our sincere gratitude to our project supervisor \textbf{Dr.\ Mohamed Salah} for his continuous guidance, valuable feedback, and unwavering support throughout the development of this project. His expertise and encouragement played a vital role in the successful completion of this work.
+
+\vspace{0.5em}
+\noindent We also extend our appreciation to \textbf{Dr.\ Mohamed ElShimy} for his time, insightful comments, and constructive evaluation, which contributed greatly to improving the quality and clarity of this report.
+
+\vspace{0.5em}
+\noindent Finally, we would like to thank our families and friends for their continuous encouragement and understanding throughout this journey.
+
+\newpage
+
+% ============================================================
+%  ABSTRACT
+% ============================================================
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+This graduation project presents the design and implementation of an \textbf{AI-Based Intelligent Surveillance System} that unifies three modalities of analysis---multi-camera person re-identification, face and demographic analysis, and audio intelligence---to support security operations and situational awareness in public spaces such as shopping malls, transport hubs, parks, and university campuses. The system is engineered to run on commodity, CPU-only hardware and to operate as a human-in-the-loop decision-support tool rather than an autonomous judgment system.
+
+\vspace{0.5em}
+\noindent The visual core of the system is a real-time, multi-camera \textbf{person re-identification (Re-ID)} pipeline. Each camera stream is processed by a YOLOv8 segmentation detector and a ByteTrack multi-object tracker; person crops are cleaned through adaptive contrast enhancement, a quality gate, and pixel-level background masking before a purpose-built Re-ID backbone---\textbf{OSNet x1.0} trained on the Market-1501 benchmark---converts each person into a 512-dimensional appearance embedding. Identities are matched across cameras through an in-memory \textbf{FAISS} vector index and a context-aware \emph{triple-threshold} decision that distinguishes same-camera, overlapping-camera, and cross-camera regimes, backed by a background reconciliation worker that merges fragmented identities. A vision-language model (\textbf{Qwen2.5-VL}) additionally generates a natural-language description of every tracked person, enabling semantic queries such as ``find a man in a red shirt and a white hat.''
+
+\vspace{0.5em}
+\noindent An \emph{additive} face-and-attributes layer enriches each tracked person with soft biometrics while never altering cross-camera body identity: InsightFace face embeddings with age and gender estimation, a ResNet-18 ethnicity classifier (82.56\%), a ResNet-50 glasses detector (90\%), a CNN-LSTM violence detector, a named watchlist, a ``returning person'' badge, and a face-image search path. To protect the integrity of body Re-ID, face embeddings are kept in a strictly isolated store. The audio module implements a Whisper-first hierarchical language classification pipeline, multilingual violence keyword detection spanning over 30 languages, real-time speaker recognition using ECAPA-TDNN, and MarianMT-powered translation---all integrated into a single processing pipeline with automated email alerting.
+
+\vspace{0.5em}
+\noindent Reported engineering results include a measured \textbf{916$\times$} search speed-up from the FAISS index over a linear scan, clearly separated same-person and different-person similarity distributions after the Re-ID backbone upgrade, and calibrated identity thresholds validated on the WiseNet multi-camera dataset. Throughout, the system is designed with ethical considerations at its core, operating as a human-in-the-loop decision-support tool that flags candidates for human review rather than making autonomous decisions.
+
+\newpage
+
+% ============================================================
+%  PART I: INTRODUCTION & BACKGROUND
+% ============================================================
+\part{Introduction and Background}
+
+% ============================================================
+%  CHAPTER 1: INTRODUCTION
+% ============================================================
+\setcounter{chapter}{0}
+\chapter{Introduction}
+\setcounter{section}{0}
+
+\section{Introduction}
+In this chapter, we provide a comprehensive overview of the motivations and goals behind the \textbf{AI-Based Intelligent Surveillance System}. We begin by introducing the challenges faced in modern public security, followed by the vision and mission that drove our team to build this system. We then outline the project scope, the technologies adopted, and the ethical framework that governs its use.
+
+\section{Project Vision}
+The vision of this project is to create a comprehensive AI-powered surveillance system that transforms how public spaces handle security, safety, and operational intelligence.
+
+Imagine a bustling shopping mall where a distraught mother approaches security, reporting that she has lost her child. Instead of manually reviewing hours of surveillance footage, the security officer simply inputs a description: ``my son, about 8 years old, wearing a red shirt, Asian.'' Within seconds, our intelligent system searches through live camera feeds and recorded footage, identifying potential matches and tracking the child's movement across the mall. The system highlights the child's last known location, enabling security personnel to respond swiftly and reunite the family.
+
+\vspace{0.5em}
+\noindent Beyond commercial applications, our system serves critical security functions. Law enforcement agencies can integrate the system with drones to search for missing persons or criminal suspects in crowded public spaces such as parks, stadiums, or transportation hubs. The system processes live video streams, identifying individuals matching specific descriptions while maintaining ethical oversight and human decision-making authority.
+
+\vspace{0.5em}
+\noindent This vision encompasses a future where AI enhances human capabilities rather than replacing human judgment, where technology serves communities by making public spaces safer and more responsive, and where ethical considerations remain at the forefront of every implementation decision.
+
+\section{Project Mission}
+Our mission has been to design, build, and validate a working multi-camera surveillance intelligence system that can detect, track, and re-identify every person across a network of cameras, search for and describe those individuals in natural language, and enrich each identity with face-based soft biometrics and threat awareness---all while keeping a human firmly in the decision loop and running on commodity hardware.
+
+Specifically, our accomplishments include:
+\begin{itemize}
+    \item Built an end-to-end multi-camera \textbf{person re-identification} pipeline that detects, tracks, and re-identifies individuals across five synchronized cameras on CPU-only hardware.
+    \item Replaced a generic ImageNet backbone with \textbf{OSNet x1.0} and Market-1501 Re-ID weights, producing 512-dimensional identity embeddings whose same-person and different-person similarity distributions are clearly separable.
+    \item Upgraded tracking from DeepSORT to \textbf{ByteTrack} for robust occlusion survival, and added a YOLOv8 segmentation detector with pixel-level background masking, adaptive contrast enhancement, and a crop quality gate to guarantee clean embeddings.
+    \item Engineered a context-aware cross-camera matching strategy---a \emph{triple-threshold} live decision plus a background reconciliation worker with co-visibility reasoning---that prevents both identity ``sponging'' and identity ``splitting.''
+    \item Integrated an in-memory \textbf{FAISS} vector index that accelerates identity search by a measured 916$\times$ over a linear scan, while keeping SQLite as the durable source of truth.
+    \item Added a vision-language \textbf{description and semantic-search} module (Qwen2.5-VL) that enables natural-language person search such as ``a man in a red t-shirt and a white hat.''
+    \item Integrated an additive \textbf{face-and-attributes} layer: InsightFace face embeddings with age and gender, a ResNet-18 ethnicity classifier (82.56\%), a ResNet-50 glasses detector (90\%), a named watchlist, a returning-person badge, a CNN-LSTM violence detector, and a face-image search path---without ever letting face data alter body identity.
+    \item Developed a comprehensive \textbf{audio processing} pipeline supporting real-time speech recognition, speaker recognition, language detection, multilingual violence keyword scanning, translation, and automated alert dispatch.
+    \item Established a modular, multi-threaded architecture allowing independent module development and graceful degradation, and implemented ethical safeguards ensuring the system operates as a decision-support tool with human oversight.
+\end{itemize}
+
+\section{Problem Statement}
+Traditional surveillance systems rely heavily on human operators to monitor camera feeds in real time. This approach is prone to fatigue, limited in scalability, and ineffective when handling large camera networks. Key challenges include:
+
+\begin{itemize}
+    \item \textbf{Human Limitation:} Security officers cannot continuously monitor dozens of feeds simultaneously without missing critical events.
+    \item \textbf{Retrospective Investigation:} Reviewing hours of recorded footage to find a suspect is time-consuming and resource-intensive.
+    \item \textbf{Multilingual Environments:} Malls and public spaces host visitors speaking diverse languages, making audio monitoring without automated translation impractical.
+    \item \textbf{Scalability:} Manual systems do not scale as the number of cameras or monitored spaces grows.
+\end{itemize}
+
+\section{Proposed Solution}
+The proposed system addresses these limitations through a modular AI pipeline that automates the detection, classification, and alerting processes. The system is designed to assist---not replace---human security personnel, providing them with timely, accurate, and actionable information.
+
+\section{Scope of the Project}
+The system is scoped for deployment in semi-public and public spaces such as:
+\begin{itemize}
+    \item Shopping malls and commercial centers
+    \item Airports and transportation hubs
+    \item University campuses and institutional buildings
+    \item Parks and public event venues
+\end{itemize}
+
+\noindent The project covers both visual and audio analysis, with all modules developed to operate independently and integrate seamlessly through standardized interfaces.
+
+\section{Report Structure}
+The remainder of this report is organized into four parts. \textbf{Part~I} (Chapters~1--2) introduces the project and surveys the related literature. \textbf{Part~II} (Chapters~3--8) details the visual analysis system: the overall architecture and threading model (Chapter~3); detection, tracking, and image preprocessing (Chapter~4); person embedding and the pose-aware gallery (Chapter~5); cross-camera identification, fast search, and reconciliation (Chapter~6); natural-language description and semantic search (Chapter~7); and the face, demographic, and violence analysis layer (Chapter~8). \textbf{Part~III} (Chapters~9--11) describes the audio processing pipeline: speech recognition and speaker identification (Chapter~9); language detection and real-time translation (Chapter~10); and violence keyword detection with automated alerting (Chapter~11). \textbf{Part~IV} (Chapters~12--14) covers the database design and system integration, the ethical framework, and the conclusion with future work.
+
+\section{Summary}
+In this chapter, we introduced the AI-Based Intelligent Surveillance System, outlined the motivations and challenges driving its development, and described the scope of the project. In the next chapter, we will survey the relevant literature and related work that informed our design decisions.
+
+\newpage
+
+% ============================================================
+%  CHAPTER 2: LITERATURE SURVEY
+% ============================================================
+\chapter{Literature Survey}
+\setcounter{section}{0}
+
+\section{Introduction}
+This chapter surveys the research and engineering background that informs our system. Because the project spans three problem domains, the survey is organized accordingly. We first review the technologies underpinning the visual core---person detection and multi-object tracking, person re-identification, approximate nearest-neighbor search, and vision-language retrieval---and then review face and demographic analysis, video-based violence detection, and audio analysis for surveillance. We close by identifying the gaps that our system addresses.
+
+\section{Person Detection and Multi-Object Tracking}
+Modern video-surveillance pipelines begin with a person detector followed by a multi-object tracker. Single-stage detectors of the YOLO (\emph{You Only Look Once}) family have become the de-facto standard for real-time person detection because they predict bounding boxes and class probabilities in a single forward pass; the YOLOv8 family additionally offers an instance-segmentation variant that emits a per-object pixel mask alongside each box. Tracking then links detections across frames into persistent tracks. DeepSORT, which couples a Kalman-filter motion model with an appearance embedding, was the long-standing baseline, but it discards low-confidence detections and tends to lose tracks through occlusion. ByteTrack (ECCV 2022) introduced a two-stage association strategy that also exploits \emph{low}-confidence detections to keep tracks alive through partial occlusion, achieving state-of-the-art tracking accuracy without any appearance model---making it both faster and more robust than DeepSORT on crowded surveillance scenes.
+
+\section{Person Re-Identification}
+Person re-identification (Re-ID) is the task of matching images of the same individual captured by different cameras. The central difficulty is that a generic classification backbone such as ResNet-50 pre-trained on ImageNet encodes \emph{semantic category} rather than \emph{individual identity}: two different people in similar clothing may score a higher similarity than two views of the same person from the front and the back. Purpose-built Re-ID networks address this by training on identity-labeled datasets such as Market-1501 and DukeMTMC-reID. OSNet (Omni-Scale Network, ICCV 2019) is a lightweight Re-ID architecture that fuses features across multiple spatial scales, capturing both fine-grained cues (clothing texture, logos) and coarse body structure simultaneously, and producing a compact 512-dimensional, identity-discriminative embedding. Re-ID research also studies pose variation, background clutter, and lighting robustness; background removal and pose-aware gallery construction are established techniques for improving cross-camera matching, both of which directly inform our design.
+
+\section{Approximate Nearest-Neighbor Search}
+Once each person is represented by an embedding vector, re-identification reduces to a nearest-neighbor search over a growing gallery of vectors. A naive linear scan computes the cosine similarity against every stored embedding and becomes a bottleneck as the gallery grows to thousands of identities. FAISS (Facebook AI Similarity Search) is an open-source library of optimized vector indexes; its exact inner-product index (\texttt{IndexFlatIP}) computes a top-$k$ search over hundreds of thousands of vectors in well under a millisecond on CPU, and is mathematically equivalent to cosine similarity when the vectors are $L_2$-normalized. FAISS therefore allows a Re-ID system to scale to production gallery sizes without altering its matching semantics.
+
+\section{Vision-Language Models and Text-Based Retrieval}
+Embedding-based Re-ID answers ``is this the same person?'' but cannot answer ``find a man in a red shirt.'' Recent vision-language models (VLMs) close this gap by jointly modeling images and text. Compact open VLMs such as Qwen2.5-VL can caption a person crop in natural language, producing an appearance description that is both human-readable and searchable. To retrieve people by free-text queries, the descriptions and the query are projected into a shared semantic space using a sentence-embedding model such as Sentence-BERT (\texttt{all-MiniLM-L6-v2}) and ranked by cosine similarity---a far more flexible approach than brittle keyword matching, because it captures meaning (for example, ``crimson top'' matches ``red shirt''). This text channel complements the visual embedding when appearance alone is ambiguous.
+
+\section{Face Detection and Recognition}
+Face detection has evolved significantly from classical approaches such as Viola-Jones to modern deep learning detectors. The Multi-task Cascaded Convolutional Network (MTCNN) introduced a three-stage pipeline that jointly detects faces and localizes facial landmarks, offering high accuracy across pose and illumination variations. Deep face recognition models such as FaceNet and ArcFace produce compact embeddings that enable efficient similarity search in large databases. More recent unified toolkits---most notably InsightFace---bundle face detection, 512-dimensional ArcFace face embeddings, and age and gender estimation behind a single interface; our face layer adopts InsightFace for exactly this reason.
+
+\section{Demographic Attribute Estimation}
+Early demographic estimation relied on hand-crafted features and shallow classifiers. Deep learning transformed the field: ResNet and EfficientNet architectures now achieve near-human accuracy on age, gender, and ethnicity estimation benchmarks. The FairFace dataset was specifically designed to address demographic bias present in earlier datasets such as CelebA, providing balanced representation across seven racial groups. MobileNetV2's inverted residual structure makes it particularly suitable for age-range classification tasks where lightweight real-time inference is required.
+
+\section{Emotion Recognition}
+Facial action coding systems provided early frameworks for emotion analysis. Convolutional networks trained on datasets such as AffectNet and FER2013 have since achieved strong performance across the standard seven emotion categories. EfficientNet's compound scaling offers an effective balance between accuracy and computational cost, making it a popular choice for real-time emotion analysis in surveillance contexts.
+
+\section{Violence Detection in Video}
+Video-based violence detection requires temporal modeling beyond single-frame analysis. The RWF-2000 dataset provides 2000 real-world surveillance clips balanced between violent and non-violent scenes. Optical flow features combined with CNN-LSTM or 3D-CNN architectures have demonstrated strong performance on this benchmark. Frame-level spatial features combined with temporal aggregation enable the distinction between legitimate physical activity and actual violence.
+
+\section{Audio Analysis for Surveillance}
+Automatic speech recognition (ASR) systems have advanced dramatically with transformer-based architectures. OpenAI Whisper, trained on 680,000 hours of multilingual audio, achieves near-human transcription accuracy across 99 languages and provides built-in language detection through spectral analysis. Speaker recognition systems based on ECAPA-TDNN (Emphasized Channel Attention, Propagation, and Aggregation in TDNN) achieve state-of-the-art performance on the VoxCeleb benchmark. For translation, MarianMT provides efficient neural machine translation across hundreds of language pairs, with Google Translate serving as a reliable fallback for unsupported pairs.
+
+\section{Gaps Addressed by This Work}
+Several gaps emerge from this survey. \textbf{First}, many deployed surveillance systems treat detection, tracking, and re-identification as disconnected stages and rely on a single global similarity threshold, which fails when the same person is seen simultaneously from different angles by overlapping cameras, or sequentially across non-overlapping ones; our system addresses this with a topology-aware triple-threshold decision and a background reconciliation worker. \textbf{Second}, embedding-only Re-ID cannot be queried in natural language, so we add a vision-language description channel and semantic search. \textbf{Third}, many Re-ID pipelines assume GPU acceleration, whereas our system is engineered to run entirely on CPU. \textbf{Fourth}, existing systems typically address either visual or audio surveillance in isolation; our system integrates both, and extends multilingual violence keyword detection to over 30 languages, making it viable in diverse cultural settings. \textbf{Finally}, we treat face-based attributes as an additive, strictly isolated enrichment layer, so that demographic estimation never compromises the integrity of body-based identity.
+
+\section{Summary}
+This chapter surveyed the key technologies and datasets that underpin our system. In the next chapter, we present the overall system architecture and describe how the individual modules interact.
+
+\newpage
+
+% ============================================================
+%  PART II: VISUAL ANALYSIS MODULES
+% ============================================================
+\part{Visual Analysis: Multi-Camera Re-Identification and Face Analysis}
+
+% ============================================================
+%  CHAPTER 3: SYSTEM OVERVIEW AND ARCHITECTURE
+% ============================================================
+\chapter{System Overview and Architecture}
+\setcounter{section}{0}
+
+\section{Introduction}
+This chapter presents the overall architecture of the visual analysis system that forms the core of the project. Rather than a collection of independent classifiers, the visual system is a single, continuously running pipeline whose primary job is to answer one question in real time: \emph{``who is this person, and have we seen them before on any camera?''} Everything else---demographic attributes, natural-language descriptions, face recognition, and violence detection---is layered on top of that body-identity backbone.
+
+We begin with the design philosophy that shaped every subsequent decision, then describe the multi-threaded processing model, the end-to-end data flow from raw frame to confirmed identity, the inventory of modules and the technologies behind them, and the configuration discipline that keeps the system tunable and reproducible. The chapters that follow expand each stage in detail.
+
+\section{Design Philosophy}
+The architecture is governed by six principles that recur throughout this report.
+
+\begin{itemize}
+    \item \textbf{Identity is body-first.} Cross-camera identity is established exclusively from full-body appearance embeddings (Chapter~5) and motion tracking (Chapter~4). Face recognition and demographic attributes form an \emph{additive} enrichment layer (Chapter~8) that never binds, merges, or re-scores an identity. This keeps the system robust in real surveillance footage, where faces are frequently small, turned away, or absent entirely.
+    \item \textbf{Separate fast work from slow work.} Bounding-box tracking must run at the camera frame rate, whereas feature extraction, database reconciliation, and vision-language description are comparatively expensive. These are placed on separate threads so that a slow operation can never stall the real-time loop (Section~3.3).
+    \item \textbf{One source of truth.} A SQLite database is the durable, authoritative store. The in-memory FAISS index (Chapter~6) is treated as a redundant cache that accelerates search; if the two ever disagree, SQLite wins, and if FAISS is unavailable the system transparently falls back to a linear database scan.
+    \item \textbf{CPU-only.} The entire pipeline is engineered to run on commodity hardware without a GPU. The model choices (OSNet~x1.0, a nano-scale YOLOv8, and a non-reasoning vision-language model) and the asynchronous design all follow from this constraint.
+    \item \textbf{Graceful degradation.} One camera's failure must never crash the others, and every optional module (FAISS, the description worker, face analysis, violence detection) auto-disables with a warning if its dependency or model file is missing. With the optional layers off, the system behaves exactly as its core.
+    \item \textbf{No magic numbers.} Every threshold, dimension, and model name lives in a single configuration module, so the system's behavior is fully described by one auditable file (Section~3.6).
+\end{itemize}
+
+\section{The Multi-Threaded Processing Model}
+To honor the ``fast versus slow'' principle, the system is divided into four cooperating thread domains. The detection loop produces work; the other three consume it asynchronously through thread-safe queues.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|l|X|l|}
+\hline
+\textbf{Thread domain} & \textbf{Responsibility} & \textbf{Cadence} \\
+\hline
+Detection loop & Round-robin over cameras: frame enhancement, YOLOv8-seg detection, ByteTrack association, mask recovery, and rendering. & Frame rate \\
+\hline
+Embedding worker & Consumes person crops, extracts OSNet body embeddings, performs the identity decision, and writes new or updated identities. & Per buffered track \\
+\hline
+Reconciliation worker & Background daemon that periodically merges fragmented identities using mean-pool similarity and co-visibility reasoning. & Every 120\,s \\
+\hline
+Description worker & Background daemon that generates a vision-language description and a semantic-search embedding for each identity. & On demand / sweep \\
+\hline
+\end{tabularx}
+\caption{The four asynchronous thread domains of the visual pipeline.}
+\label{tab:threads}
+\end{table}
+
+The detection loop deliberately cycles through the cameras one at a time---a single YOLO inference per cycle---rather than running one process per camera in parallel. On a CPU, parallel detection processes contend for the same cores and degrade every stream at once; round-robin scheduling keeps latency predictable and bounded. The three background workers each follow the same defensive pattern: a stop event for clean shutdown, a per-task \texttt{try/except} so that a single bad item cannot kill the thread, and queues sized so that, under load, work is \emph{deferred} rather than dropped (durable jobs are persisted in SQLite and recovered later). The net effect is that an expensive vision-language call or a reconciliation pass can take seconds without ever perturbing the frame-rate tracking loop.
+
+\section{End-to-End Data Flow}
+At the highest level, the visual pipeline transforms a camera frame into a stable, cross-camera identity through the following stages:
+
+\begin{center}
+Camera Frame $\rightarrow$ Enhancement $\rightarrow$ Detection + Segmentation $\rightarrow$ Tracking $\rightarrow$ Quality Gate + Masking $\rightarrow$ Body Embedding $\rightarrow$ FAISS Search $\rightarrow$ Identity Decision $\rightarrow$ Description + Attributes
+\end{center}
+
+Concretely, each captured frame is conditionally enhanced (contrast and gamma) and passed to the YOLOv8 segmentation detector, which returns bounding boxes \emph{and} per-person pixel masks for every detection above a deliberately low confidence floor. ByteTrack associates these detections into persistent tracks, surviving brief occlusions by exploiting even the low-confidence boxes. For each track, a representative crop is cleaned---its background masked to a neutral gray---and screened by a quality gate; once a short buffer of good crops is collected, the embedding worker extracts a single 512-dimensional OSNet feature vector and queries the FAISS index. A context-aware decision (Chapter~6) either binds the track to an existing person or registers a new one. New identities are then enqueued for the description worker, which captures a natural-language appearance description and---if enabled---face-based attributes. Every result is committed to SQLite, which in turn keeps the FAISS index and downstream caches synchronized through post-commit callbacks. The complete, annotated process flow is given in Chapter~6.
+
+\section{Module Inventory}
+Table~\ref{tab:modules} lists the principal modules of the visual system and their responsibilities. Each is a self-contained unit with a single responsibility, which made independent development and testing possible.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{Module} & \textbf{Responsibility} \\
+\hline
+Camera simulator & Reads synchronized video files and presents them as live camera streams. \\
+\hline
+Person detector & YOLOv8-seg person detection with per-person pixel masks. \\
+\hline
+Tracker & ByteTrack two-stage multi-object tracking, per camera. \\
+\hline
+Frame enhancer & Conditional CLAHE contrast enhancement and auto-gamma correction. \\
+\hline
+Quality gate & Rejects blurry, dark, or undersized crops before embedding. \\
+\hline
+Masking & Applies segmentation masks and re-associates masks to tracks. \\
+\hline
+Embedder & OSNet x1.0 (Market-1501) 512-d body-embedding extraction. \\
+\hline
+Gallery manager & Pose-aware, multi-view gallery construction per identity. \\
+\hline
+Database & SQLite (WAL) storage and source of truth, with post-commit callbacks. \\
+\hline
+Searcher & Identity search over FAISS with a SQLite fallback. \\
+\hline
+FAISS index & In-memory \texttt{IndexFlatIP} vector index for fast cosine search. \\
+\hline
+Reconciliation worker & Background merging of fragmented identities. \\
+\hline
+Describer & Vision-language natural-language person description (Qwen2.5-VL / Marlin). \\
+\hline
+Description worker + text search & Semantic indexing and natural-language retrieval. \\
+\hline
+Face analyzer + face searcher & InsightFace embeddings, attributes, watchlist, face-image search (additive). \\
+\hline
+Violence detector + alerts & CNN-LSTM violence scoring with logging and notification (isolated). \\
+\hline
+Visualizer & Multi-camera grid display with per-identity color coding. \\
+\hline
+\end{tabularx}
+\caption{Module inventory of the visual analysis system.}
+\label{tab:modules}
+\end{table}
+
+\section{Technology Stack and Configuration Discipline}
+Table~\ref{tab:stack} summarizes the core technologies and the role each one plays.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{Technology} & \textbf{Role in the system} \\
+\hline
+Python 3.12 & Implementation language. \\
+\hline
+Ultralytics YOLOv8-seg & Person detection with instance masks. \\
+\hline
+ByteTrack & Multi-object tracking. \\
+\hline
+Torchreid / OSNet x1.0 & Person re-identification embedding backbone. \\
+\hline
+OpenCV & Frame capture, enhancement, and drawing. \\
+\hline
+FAISS (CPU) & In-memory nearest-neighbor search. \\
+\hline
+SQLite (WAL) & Durable storage and source of truth. \\
+\hline
+Ollama + Qwen2.5-VL & Local vision-language person description. \\
+\hline
+Sentence-Transformers (MiniLM) & Semantic search over descriptions. \\
+\hline
+InsightFace & Face detection, embedding, and age/gender (additive layer). \\
+\hline
+PyTorch / Torchvision & ResNet attribute classifiers and the CNN-LSTM violence model. \\
+\hline
+\end{tabularx}
+\caption{Core technology stack of the visual system.}
+\label{tab:stack}
+\end{table}
+
+In keeping with the ``no magic numbers'' principle, every tunable value---detection and tracking thresholds, the embedding dimension, the three identity-matching thresholds, gallery limits, the reconciliation cadence, and all model names and paths---resides in a single configuration module. That module also exposes coarse-grained feature switches (\texttt{ENABLE\_FAISS}, \texttt{ENABLE\_DESCRIPTION\_WORKER}, \texttt{ENABLE\_FACE\_ANALYSIS}, \texttt{ENABLE\_VIOLENCE\_DETECTION}), so that each optional subsystem can be disabled without code changes. The exact values used throughout this report are collected in the relevant chapters.
+
+\section{Dataset and Deployment Target}
+The system is developed and evaluated on the \textbf{WiseNet} dataset, which provides five synchronized indoor surveillance cameras with overlapping fields of view---an ideal testbed for cross-camera re-identification, because the same person is frequently visible on several cameras at once. The deployment target is a single CPU-only machine, reflecting the realistic constraints of small and mid-size installations that cannot dedicate a GPU to every camera node.
+
+\section{Summary}
+This chapter introduced the architecture of the visual analysis system: a body-first identity backbone, a four-thread model that separates real-time tracking from expensive asynchronous work, a SQLite source of truth shadowed by a FAISS cache, and a strict configuration discipline---all engineered for CPU-only operation with graceful degradation. The next chapter begins the detailed treatment of the pipeline with detection, tracking, and image preprocessing.
+
+\newpage
+
+% ============================================================
+%  CHAPTER 4: DETECTION, TRACKING & PREPROCESSING
+% ============================================================
+\chapter{Detection, Tracking, and Image Preprocessing}
+\setcounter{section}{0}
+
+\section{Introduction}
+Every identity the system produces begins as a handful of pixels in a single video frame. The quality of those pixels---how cleanly the person is detected, how reliably the detection is tracked through time, and how carefully the resulting crop is prepared---sets a hard ceiling on the accuracy of everything downstream. As the project's guiding maxim puts it: \emph{garbage in, garbage out}. A blurry, half-occluded, or background-dominated crop yields a useless embedding no matter how good the embedding model is.
+
+This chapter describes the front half of the visual pipeline: person detection with a segmentation-capable YOLOv8 model, multi-object tracking with ByteTrack, and the preprocessing stack---frame enhancement, the crop quality gate, and background masking---that guarantees only clean, person-centric crops reach the embedding model of Chapter~5.
+
+\section{Person Detection with YOLOv8 Segmentation}
+The detector is the entry point of the pipeline. We use the segmentation variant \texttt{yolov8n-seg}, the nano-scale member of the YOLOv8 family, for two reasons. First, the nano model is fast enough to run on CPU across five camera streams in round-robin. Second, and more importantly, the segmentation variant emits a \textbf{per-person pixel mask} alongside each bounding box at a cost of only a few milliseconds per frame. That mask is what later allows the system to erase the background from each crop (Section~4.7)---the single most impactful structural improvement for embedding quality.
+
+\subsection{Passing All Detections to the Tracker}
+A subtle but critical design choice is the detection confidence floor:
+\[
+\texttt{DETECTION\_CONF} = 0.10 .
+\]
+This value is deliberately low. The detector is \emph{not} the place where weak detections are filtered out; instead, \emph{all} detections above 0.10 are forwarded to the tracker, because ByteTrack uses low-confidence boxes to survive occlusion (Section~4.3). High-confidence gating happens later and elsewhere---when a crop is about to seed a new identity (Section~4.8). Raising this floor would silently break occlusion handling, so it is fixed as a system invariant. Detection runs at an input size of $256$ pixels, balancing recall against CPU cost.
+
+\section{Multi-Object Tracking with ByteTrack}
+Detection finds people in a single frame; tracking is what links those detections through time so that a person keeps a stable track identity while they remain visible on a camera. The project replaced its original DeepSORT tracker with \textbf{ByteTrack}, whose two-stage association strategy is far better suited to crowded, occlusion-heavy surveillance video.
+
+\subsection{The Two-Stage Association Strategy}
+ByteTrack splits each frame's detections into a high-confidence set and a low-confidence set and associates them in two stages:
+\begin{itemize}
+    \item \textbf{Stage 1 (high confidence, $\geq 0.45$):} high-confidence detections are matched to existing tracks by intersection-over-union (IoU) of their bounding boxes, refined by a Kalman-filter motion prediction.
+    \item \textbf{Stage 2 (low confidence, $0.10$--$0.45$):} the remaining low-confidence detections are matched \emph{only} against tracks left unmatched after Stage~1.
+\end{itemize}
+The insight is that a partially occluded person produces a low-confidence detection. DeepSORT discards that box and the track dies, only to be re-created later with a new identity---an ``identity switch.'' ByteTrack instead uses the weak box to keep the existing track alive through the occlusion. This single mechanism eliminates the most common cause of identity churn in surveillance footage.
+
+\subsection{ByteTrack versus DeepSORT}
+Table~\ref{tab:bytetrack} contrasts the two trackers on the properties that matter for this system.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|X|l|l|}
+\hline
+\textbf{Property} & \textbf{DeepSORT (old)} & \textbf{ByteTrack (current)} \\
+\hline
+Low-confidence detections (0.10--0.45) & Discarded & Used for association \\
+\hline
+Occlusion handling & Poor --- track dies & Survives re-association \\
+\hline
+Re-ID model dependency & Yes (appearance embedder) & No --- IoU + Kalman only \\
+\hline
+Identity switches & Frequent & Rare \\
+\hline
+CPU performance & $\sim$8--12 fps/cam & $\sim$15--20 fps/cam \\
+\hline
+\end{tabularx}
+\caption{ByteTrack versus DeepSORT on surveillance-relevant properties.}
+\label{tab:bytetrack}
+\end{table}
+
+Crucially, ByteTrack needs \emph{no} appearance embedder of its own---it relies on motion and overlap only. This keeps it fast and, just as importantly, cleanly separates two concerns: ByteTrack maintains \emph{within-camera, short-term} track continuity, while the OSNet embedder (Chapter~5) handles \emph{cross-camera, long-term} identity. The tracker's main parameters are summarized in Table~\ref{tab:bytetrack_params}.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Parameter} & \textbf{Value} & \textbf{Purpose} \\
+\hline
+Track threshold & 0.45 & High-confidence gate (Stage 1) \\
+\hline
+Low threshold & 0.10 & Low-confidence gate (Stage 2) \\
+\hline
+Match threshold & 0.80 & IoU association threshold \\
+\hline
+Track buffer & 30 & Frames a lost track is retained \\
+\hline
+\end{tabular}
+\caption{ByteTrack configuration.}
+\label{tab:bytetrack_params}
+\end{table}
+
+\section{Mask-to-Track Association}
+The detector and tracker present a small bookkeeping problem: the detector emits masks indexed by \emph{detection}, but ByteTrack returns tracks in a different order and with Kalman-corrected boxes. To recover the correct mask for each track, the system rebuilds the track-to-mask mapping by matching each track's box to its originating detection by IoU. When a track is coasting through an occlusion with no matched detection in the current frame, no mask is available and the system falls back to the raw crop. This re-association runs every frame and is what makes the per-track background masking of Section~4.7 possible.
+
+\section{Frame Enhancement}
+Indoor surveillance footage is often poorly lit, and the WiseNet cameras are no exception. Before detection, each frame is conditionally passed through a two-stage enhancer.
+
+\subsection{CLAHE Contrast Enhancement}
+Contrast-Limited Adaptive Histogram Equalization (CLAHE) enhances local contrast in dark regions without blowing out bright ones or amplifying noise in flat areas. It is applied in the LAB color space to the luminance ($L$) channel only, so that color---which the embedder relies on for appearance features---is preserved:
+\[
+L' = \text{CLAHE}_{\,\text{clip}=2.0}(L), \qquad I' = \text{LAB}^{-1}(L', a, b).
+\]
+
+\subsection{Auto-Gamma Correction}
+For very dark frames, CLAHE alone is insufficient, so an auto-gamma step brightens the frame using a power-law transform:
+\[
+I_{\text{out}} = \left( \frac{I_{\text{in}}}{255} \right)^{1/\gamma} \times 255, \qquad \gamma = 0.5 .
+\]
+
+\subsection{Conditional Application}
+Both stages are \emph{conditional on frame brightness}. Auto-gamma fires only when the mean brightness falls below a threshold (60 on the 0--255 scale), and CLAHE is skipped on already-bright frames (mean $V > 120$). This saves roughly ten milliseconds per frame on well-lit scenes---meaningful when five cameras are processed in round-robin on a CPU---while still rescuing the dark frames that genuinely need help.
+
+\section{The Crop Quality Gate}
+Even with good detection, many crops are unusable: motion-blurred by a fast walk, shrunk to a few pixels at the edge of frame, or darkened into a silhouette. The crop quality gate rejects these before they can pollute a person's gallery. It applies three cheap checks, summarized in Table~\ref{tab:quality_gate}.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|l|l|X|}
+\hline
+\textbf{Check} & \textbf{Threshold} & \textbf{Rejects} \\
+\hline
+Laplacian variance & $\geq 50.0$ & Motion blur, out-of-focus crops \\
+\hline
+Minimum size & $48 \times 96$ px & Far-away or frame-edge detections \\
+\hline
+Brightness (HSV $V$ mean) & $\geq 30$ & Silhouettes and dark crops \\
+\hline
+\end{tabularx}
+\caption{The three checks of the crop quality gate.}
+\label{tab:quality_gate}
+\end{table}
+
+The blur check uses the variance of the Laplacian, a standard sharpness measure: a sharp image has strong high-frequency content and therefore high Laplacian variance, while a blurred one is smooth and scores low:
+\[
+\text{sharpness}(I) = \operatorname{Var}\!\big(\nabla^2 I_{\text{gray}}\big).
+\]
+
+\subsection{Where the Gate Runs --- and Where It Does Not}
+A key design rule is that the quality gate runs on the \textbf{gallery-update path only}, never on the identification path. When the system is merely asking ``does this person already exist?'', even a blurry crop carries enough signal for a one-time search, and rejecting it would needlessly create a duplicate identity. But when a crop is about to be \emph{stored} as a long-lived reference view, quality matters, and the gate is strict. This asymmetry---lenient for search, strict for storage---is an invariant of the system.
+
+\section{Background Isolation}
+The most impactful preprocessing step is background removal. An embedding model, left to its own devices, encodes whatever is in the crop---including the wall behind the person. If a person stands in front of a red wall, the embedder encodes ``red wall + person,'' so two \emph{different} people in front of the same wall look artificially similar, and the \emph{same} person in front of two different walls looks artificially different. Background removal attacks the root cause of both false matches and false splits.
+
+Using the per-person mask recovered in Section~4.4, every background pixel in a crop is replaced with a neutral gray (value 128):
+\[
+\text{crop}_{\text{clean}}(x,y) =
+\begin{cases}
+\text{crop}(x,y), & \text{mask}(x,y) = 1 \\
+128, & \text{mask}(x,y) = 0 .
+\end{cases}
+\]
+Neutral gray is chosen rather than black because pure black biases the embedder; a mid-gray background contributes minimal directional signal to the appearance vector.
+
+\section{High-Confidence Crop Gating}
+The final preprocessing decision concerns which crops are allowed to \emph{seed a new identity}. Only crops backed by a high-confidence detection should do so; otherwise a weak, occlusion-era box could spawn a spurious person. Because ByteTrack returns Kalman-corrected boxes that no longer exactly equal any raw detection box, the system matches a track to a high-confidence detection by IoU ($\geq 0.7$) rather than by exact coordinate equality. A low-confidence crop is still used to keep the track \emph{alive} and visible, but it never seeds a new identity. (An early version compared boxes for exact equality, which always failed; replacing that test with IoU matching was an important correctness fix.)
+
+\section{Summary}
+This chapter described the front half of the visual pipeline. A nano-scale YOLOv8 segmentation model detects people and emits per-person masks; a deliberately low confidence floor passes all detections to ByteTrack, whose two-stage association survives occlusions and minimizes identity switches without any appearance model. A preprocessing stack then guarantees clean inputs to the embedder: conditional CLAHE and auto-gamma rescue dark frames, a three-check quality gate rejects blurry, tiny, or dark crops on the storage path, and segmentation masks erase the background to neutral gray. The next chapter turns these clean crops into identity embeddings.
+
+\newpage
+
+% ============================================================
+%  CHAPTER 5: PERSON EMBEDDING & POSE-AWARE GALLERY
+% ============================================================
+\chapter{Person Embedding and the Pose-Aware Gallery}
+\setcounter{section}{0}
+
+\section{Introduction}
+A clean, background-masked crop is only useful once it is turned into a number that can be compared. This chapter describes how the system converts each person crop into a 512-dimensional \emph{appearance embedding}, and---just as importantly---how it accumulates a small, diverse \emph{gallery} of embeddings per identity so that a person can be re-recognized from any angle. The embedding model is the single most important component for re-identification accuracy, and choosing the right one (and loading the right weights into it) was the largest single accuracy improvement in the project.
+
+\section{The Re-Identification Embedding Problem}
+The naive approach to appearance embedding is to take a general-purpose convolutional network---ResNet-50 pre-trained on ImageNet---and use its penultimate-layer activations as a feature vector. This is exactly what the system did originally, and it failed in a characteristic way.
+
+The problem is that an ImageNet-trained network is optimized to answer ``what \emph{kind} of object is this?'', not ``\emph{which} person is this?''. Its features encode \emph{semantic category}, so the embedding of a person in a blue shirt is dominated by the concept ``person wearing blue,'' which any other person in blue also evokes. The practical consequences were three recurring failures:
+\begin{itemize}
+    \item the \textbf{gallery-sponge} problem, where one identity absorbs every new track because different people score above threshold;
+    \item the \textbf{color-change-on-turn} problem, where the same person seen from the front and the back scores \emph{below} threshold and splits into two identities;
+    \item \textbf{unstable thresholds} that need constant retuning because the same-person and different-person score ranges overlap heavily.
+\end{itemize}
+All three trace back to a single root cause: an embedding space in which same-person and different-person similarities are not separable.
+
+\section{OSNet: an Omni-Scale Re-Identification Backbone}
+The solution is a backbone purpose-built for re-identification. The system uses \textbf{OSNet x1.0} (Omni-Scale Network), a lightweight architecture designed specifically for person Re-ID. Its defining feature is \emph{omni-scale feature learning}: each building block aggregates features over multiple receptive-field sizes simultaneously, so a single embedding captures both fine-grained detail (a logo, a stripe, shoe color) and coarse structure (height, build, posture). OSNet is also remarkably small---smaller than many mobile backbones---which suits the CPU-only target. Its output is a compact, $L_2$-normalized 512-dimensional vector.
+
+\section{The Importance of Re-Identification Weights}
+Choosing OSNet is necessary but not sufficient. A crucial and easily-missed detail is that simply instantiating OSNet with its default ``pretrained'' flag loads \emph{ImageNet} weights---general visual features, not Re-ID features. In that state, OSNet performs barely better than ResNet-50. The system therefore explicitly downloads and loads the \textbf{Market-1501 Re-ID weights}, trained on one of the largest person-Re-ID benchmarks, layering identity-discriminative parameters on top of the architecture. If that download or load fails, the system logs a loud warning and falls back to ImageNet weights, because the difference is the difference between working and not working.
+
+Table~\ref{tab:osnet_dist} shows why this matters, comparing cosine-similarity ranges for the two configurations across the situations a multi-camera system must handle.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|X|c|c|}
+\hline
+\textbf{Pair type} & \textbf{ResNet-50 (ImageNet)} & \textbf{OSNet (Market-1501)} \\
+\hline
+Same person, same angle & 0.90--0.99 & 0.92--0.99 \\
+\hline
+Same person, $90^{\circ}$ turn & 0.55--0.75 & 0.78--0.92 \\
+\hline
+Same person, front $\rightarrow$ back & 0.45--0.65 & 0.68--0.88 \\
+\hline
+Different people, similar clothes & 0.55--0.75 & 0.20--0.50 \\
+\hline
+\end{tabularx}
+\caption{Cosine-similarity ranges: a generic backbone versus a Re-ID backbone.}
+\label{tab:osnet_dist}
+\end{table}
+
+With ResNet-50, the same-person and different-person ranges overlap almost completely (both span roughly 0.55--0.75), so no fixed threshold can separate them. With OSNet and Re-ID weights, the two distributions pull apart: same-person similarities rise into the 0.7--0.9 band even under pose change, while different-people similarities fall to 0.2--0.5. This separation is precisely what makes the reliable, fixed thresholds of Chapter~6 possible.
+
+\section{Embedding Extraction}
+Each crop is resized to the standard Re-ID input size of $256 \times 128$ pixels (height $\times$ width) and passed through OSNet in evaluation mode, which returns the 512-dimensional feature vector directly. Vectors are $L_2$-normalized so that the inner product of two vectors equals their cosine similarity:
+\[
+\hat{\mathbf{v}} = \frac{\mathbf{v}}{\lVert \mathbf{v} \rVert_2}, \qquad
+\text{sim}(\hat{\mathbf{a}}, \hat{\mathbf{b}}) = \hat{\mathbf{a}} \cdot \hat{\mathbf{b}} .
+\]
+
+\subsection{Median Aggregation over a Frame Buffer}
+Rather than embed a single frame, the system buffers four consecutive high-quality crops of a track and aggregates their embeddings into one representative vector using the \emph{element-wise median}:
+\[
+\mathbf{v}_{\text{rep}} = \operatorname{median}\big( \mathbf{v}_1, \mathbf{v}_2, \mathbf{v}_3, \mathbf{v}_4 \big).
+\]
+The median is chosen over the mean because it is robust to outliers: if one of the four frames is atypical---a motion blur, a momentary occlusion---the mean would be dragged toward it, whereas the median ignores it. This single change measurably stabilized identity assignment.
+
+\section{The Pose-Aware Gallery}
+A person looks very different from the front, the back, and the side. A single stored embedding can therefore recognize that person only from a similar angle. To re-identify a person from \emph{any} direction, the system maintains a small \emph{gallery} of embeddings per identity, and it deliberately seeks out \emph{diverse viewpoints} rather than many near-duplicate frontal shots.
+
+\subsection{Canonical Views}
+The gallery targets four canonical viewpoints per person:
+\[
+\{\, \text{frontal},\ \text{right\_moving},\ \text{left\_moving},\ \text{side} \,\}.
+\]
+A cheap view classifier estimates the viewpoint of each crop from its bounding-box geometry and motion. A narrow box (low width-to-height ratio) implies the person is seen edge-on (``side''); otherwise the horizontal motion of the box center between consecutive frames distinguishes left- from right-moving, with a near-stationary box treated as frontal:
+\[
+\text{view} =
+\begin{cases}
+\text{side}, & w/h < 0.40 \\
+\text{right\_moving}, & \Delta x > +8 \\
+\text{left\_moving}, & \Delta x < -8 \\
+\text{frontal}, & \text{otherwise.}
+\end{cases}
+\]
+This is why crops carry their bounding box and previous bounding box through the pipeline: it lets the gallery tag every stored embedding with a canonical view at essentially no cost.
+
+\section{Force-Accept and the Diversity Gate}
+When a canonical viewpoint slot is still empty for a person, the gallery \emph{force-accepts} a matching crop into that slot, bypassing the usual novelty requirement so that under-represented angles get filled quickly. This is guarded carefully: a force-accepted crop must still be genuinely similar to the existing gallery---within a maximum distance of $0.35$ (similarity $\geq 0.65$)---so that a wrong-person crop can never be absorbed through an empty slot. Once all four canonical slots are filled, the gallery switches to \emph{diversity-only} updates, admitting a new embedding only if it is sufficiently novel relative to what is already stored, and capping the total gallery size. A separate, looser ``garbage'' distance bound rejects crops that are too dissimilar to belong to the person at all.
+
+An important safety relationship ties these bounds together: the force-accept distance must never exceed one minus the strictest identification threshold. If force-accept were looser than the threshold at which the system is willing to \emph{accept} an identity, then crops the matcher correctly rejects could still pollute a gallery through the force-accept path. Honoring this inequality keeps the gallery clean.
+
+\section{View Coverage and Where It Is Used}
+Each identity carries a \emph{view-coverage score}, the fraction of the four canonical slots that are filled:
+\[
+\text{coverage} = \frac{\text{covered canonical slots}}{4} \in [0, 1].
+\]
+This score is used \textbf{only} by the background reconciliation worker (Chapter~6) as a quality gate: a person seen from just one angle is an unreliable cross-camera match target, so reconciliation requires coverage $\geq 0.5$ (at least two distinct views) before it will consider merging two identities. Critically, this gate is \emph{not} applied in the real-time searcher. An earlier version did apply it there, with a damaging side effect: a person re-entering a camera from a new angle would be skipped for having low coverage, and a fresh identity would be created on every re-entry, multiplying duplicates. The gate belongs in slow, careful reconciliation---never in fast, lenient search.
+
+\subsection{Initial-Embedding Tagging}
+A related subtlety: when a brand-new identity is created, its very first embedding must be tagged with a real canonical view, not a placeholder. An earlier version tagged it ``initial,'' a label that counted toward nothing, leaving such persons stuck at zero coverage forever and permanently excluded from reconciliation. Computing the canonical view at creation time fixed this.
+
+\section{The Auto-Learning Gallery}
+Taken together, these mechanisms form an \emph{auto-learning} gallery: as a person moves through the camera network, the system passively collects up to ten diverse, quality-screened, pose-tagged views of them, with no manual enrollment. Every stored embedding is tagged either with a canonical view (for force-accepted slots) or with a diversity label (for novelty-gated additions), and every addition first passes the quality gate of Chapter~4. The result is a compact but viewpoint-complete representation of each identity---exactly what reliable cross-camera matching requires.
+
+\section{Summary}
+This chapter described how clean crops become comparable identities. A purpose-built Re-ID backbone---OSNet x1.0 loaded with Market-1501 weights---maps each crop to an $L_2$-normalized 512-dimensional vector whose same-person and different-person distributions are cleanly separable, unlike a generic ImageNet backbone. Four high-quality frames are aggregated by median for robustness, and a pose-aware, auto-learning gallery accumulates up to four canonical viewpoints per identity under carefully guarded force-accept and diversity rules. With separable embeddings and viewpoint-complete galleries in hand, the next chapter performs the actual cross-camera identity decision.
+
+\newpage
+
+% ============================================================
+%  CHAPTER 6: CROSS-CAMERA IDENTIFICATION, SEARCH & RECONCILIATION
+% ============================================================
+\chapter{Cross-Camera Identification, Search, and Reconciliation}
+\setcounter{section}{0}
+
+\section{Introduction}
+This chapter is the heart of the system. Given a freshly extracted body embedding, it must decide one of two things: this is a person we already know---so bind the track to their existing identity---or this is someone new, so register a fresh identity. Getting this decision right across multiple cameras, where the same person appears from different angles, sometimes simultaneously and sometimes minutes apart, is the central technical challenge of multi-camera re-identification. We describe the storage engine that holds every identity, the FAISS index that searches them quickly, the context-aware threshold logic that makes the live decision, and the background worker that repairs mistakes after the fact.
+
+\section{The Storage Engine: SQLite as the Source of Truth}
+All identities live in a SQLite database, chosen for its zero-configuration durability and its Write-Ahead Logging (WAL) mode, which allows the detection thread to read while the embedding worker writes without lock contention. SQLite is the \emph{single source of truth}: every other store in the system (the FAISS index, downstream caches) is derived from it and can be rebuilt from it.
+
+The schema centers on a few tables, summarized in Table~\ref{tab:schema}.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{Table} & \textbf{Contents} \\
+\hline
+\texttt{persons} & One row per identity: UUID, first/last seen time and camera, attributes, and a pointer to the latest description. \\
+\hline
+\texttt{person\_embeddings} & The gallery: many rows per person, each a raw 512-d float vector with an angle tag. \\
+\hline
+\texttt{camera\_history} & Per-person log of which camera saw the person and when (used for co-visibility reasoning). \\
+\hline
+\texttt{merge\_proposals} & Pending and resolved reconciliation proposals between two identities. \\
+\hline
+\end{tabularx}
+\caption{Core database schema.}
+\label{tab:schema}
+\end{table}
+
+Embeddings are stored as raw \texttt{float32} bytes and deserialized dimension-agnostically, so a legacy vector of a different dimension is simply skipped rather than causing a crash. Two \emph{callback hooks}---one fired when an embedding is added, one when two persons are merged---notify downstream caches such as FAISS. A strict invariant governs them: \textbf{the hooks fire only after the SQLite transaction has committed.} Because SQLite is the source of truth, a downstream cache must never learn about a change that has not yet been made durable; and a hook failure is caught and logged but never allowed to crash the embedding worker.
+
+\section{Cosine-Similarity Search}
+Identity search reduces to finding the gallery vectors most similar to a query vector. Because all embeddings are $L_2$-normalized, similarity is cosine similarity, computed as a simple dot product:
+\[
+\text{sim}(\mathbf{q}, \mathbf{g}) = \mathbf{q} \cdot \mathbf{g} = \sum_{i=1}^{512} q_i\, g_i .
+\]
+Because each person owns several gallery vectors (one per view), the per-person score is the \emph{maximum} similarity over that person's gallery---if the query matches \emph{any} stored viewpoint strongly, it is a match:
+\[
+\text{score}(\mathbf{q}, p) = \max_{\mathbf{g} \in \text{gallery}(p)} \mathbf{q} \cdot \mathbf{g} .
+\]
+
+\section{Fast Search with a FAISS Vector Index}
+Computing the score above by scanning every embedding in SQLite is fine for thirty people, but it is a Python loop that grows linearly with the gallery and becomes the real-time bottleneck at scale. The system therefore maintains an in-memory \textbf{FAISS} index (\texttt{IndexFlatIP}) alongside SQLite. Because the vectors are normalized, FAISS's inner-product search returns exactly cosine similarity, and it aggregates per-person with the same max-pool semantics as the SQLite path---so thresholds tuned on one backend apply unchanged to the other.
+
+\subsection{Synchronization and Fallback}
+The index is kept consistent with SQLite through three flows:
+\begin{itemize}
+    \item \textbf{Startup:} the index is bulk-rebuilt by reading every embedding from \texttt{person\_embeddings}.
+    \item \textbf{Live insert:} the post-commit ``embedding added'' callback adds the new vector to the index.
+    \item \textbf{Merge:} the post-commit ``merge'' callback re-labels the merged vectors to the surviving identity---a cheap relabel, not a rebuild.
+\end{itemize}
+If \texttt{faiss-cpu} is not installed or the index is empty, the searcher transparently falls back to the SQLite linear scan. There is no functional difference---only a speed difference---so the system never breaks if FAISS is unavailable.
+
+\subsection{Measured Performance}
+Table~\ref{tab:faiss_perf} shows the measured speed-up. At a 100-vector gallery the per-query cost falls from 65.3 milliseconds to 0.07 milliseconds---a \textbf{916$\times$} improvement---and the gap widens with scale.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|l|l|}
+\hline
+\textbf{Gallery size} & \textbf{SQLite scan} & \textbf{FAISS} & \textbf{Speed-up} \\
+\hline
+100 vectors & 65.3 ms/query & 0.07 ms/query & \textbf{916$\times$} \\
+\hline
+10\,000 (extrapolated) & $\sim$6.5 s & $<$ 1 ms & $>$1000$\times$ \\
+\hline
+\end{tabular}
+\caption{FAISS versus a linear SQLite scan (measured).}
+\label{tab:faiss_perf}
+\end{table}
+
+Equally important is that FAISS introduces no accuracy regression. On a 20-person, 5-view test gallery, the FAISS and SQLite paths returned \emph{identical} top-1 matches on all 20 of 20 queries, with a top-1 score difference of zero within float-32 precision. Under a concurrency stress test (four worker threads, over 1{,}100 inserts and 3{,}600 searches in two seconds), the index recorded zero errors and remained exactly size-synchronized with SQLite.
+
+\section{The Multi-Threshold Matching Problem}
+With a fast, accurate search in hand, the remaining question is the \emph{threshold}: how high must the similarity score be before the system declares a match? The difficulty unique to multi-camera systems is that no single threshold works, because three different situations coexist and overlap in score:
+\begin{itemize}
+    \item \textbf{Different people, same camera, in sequence} score around 0.68--0.72 --- and must \emph{not} match.
+    \item \textbf{The same person, transitioning between cameras} scores around 0.68--0.78 --- and \emph{must} match.
+    \item \textbf{The same person seen simultaneously by two overlapping cameras from opposite angles} scores around 0.55--0.70 --- and \emph{must} match.
+\end{itemize}
+A single global threshold set high enough to reject the first case would reject the second and third; set low enough to accept the third would accept the first. The score ranges genuinely overlap, so the decision must use \emph{context}---specifically, which cameras are involved.
+
+\section{Triple-Threshold Live Matching}
+The system resolves this with three context-dependent thresholds, chosen per candidate according to the relationship between the current camera and the camera that last saw that candidate. Table~\ref{tab:thresholds} lists them.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|l|c|X|}
+\hline
+\textbf{Threshold} & \textbf{Value} & \textbf{When it applies} \\
+\hline
+Same-camera & 0.75 & Candidate last seen on the same camera (sequential): strict, to avoid merging different people. \\
+\hline
+Cross-camera & 0.68 & Candidate last seen on a different, non-overlapping camera: medium. \\
+\hline
+Overlap-camera & 0.62 & Candidate last seen on a declared overlap-partner camera: loose, for simultaneous opposite-angle views. \\
+\hline
+\end{tabularx}
+\caption{The three context-aware identity-matching thresholds.}
+\label{tab:thresholds}
+\end{table}
+
+The thresholds obey a strict ordering, enforced as an invariant:
+\[
+0.62\;(\text{overlap}) \;\leq\; 0.68\;(\text{cross}) \;\leq\; 0.75\;(\text{same}).
+\]
+This logic lives entirely in the embedding worker; the searcher itself is \emph{threshold-agnostic}, returning all candidates above a floor and letting the worker apply the context-aware decision. Keeping topology awareness out of the searcher is deliberate: it keeps the search component simple and reusable---for example, the face-photo search of Chapter~8 reuses it unchanged. The searcher's floor is set equal to the cross-camera threshold so that no plausible cross-camera candidate is discarded before the worker can judge it.
+
+\section{Camera Topology and Overlap Groups}
+The overlap threshold fires only between cameras the operator has \emph{declared} to share a field of view. This topology is expressed as a list of overlap groups; for the WiseNet testbed, cameras 3 and 4 share a room and are declared a group. If no groups are declared, the overlap branch is simply inactive and the system falls back to the same/cross distinction. This makes the feature opt-in and zero-risk: an operator describes their physical camera layout, and the matcher adapts.
+
+\section{Background Reconciliation}
+Live matching is fast but imperfect; occasionally the same physical person is split into two identities---for example, first seen from an angle no gallery covered well. A background \emph{reconciliation worker}, waking every 120 seconds, repairs these splits by comparing the galleries of existing identities and merging duplicates.
+
+\subsection{Mean-Pool, Not Max-Pool}
+Reconciliation compares two galleries using the \emph{mean} of all cross-gallery pair similarities, not the maximum:
+\[
+\text{recon\_sim}(p, q) = \frac{1}{|G_p|\,|G_q|} \sum_{\mathbf{a} \in G_p} \sum_{\mathbf{b} \in G_q} \mathbf{a} \cdot \mathbf{b} .
+\]
+Max-pool asks ``is there \emph{any} similar pair?''---and a single accidentally-similar pair out of dozens is enough to trigger a false merge. Mean-pool asks ``are these galleries \emph{consistently} similar?'', which a genuine duplicate satisfies and a coincidental look-alike does not.
+
+\subsection{Guards and Decision}
+Before proposing a merge, both identities must clear two guards: at least two gallery embeddings each, and view-coverage $\geq 0.5$ (Chapter~5). The decision then has two levels: a pair scoring above the \emph{propose} threshold (0.58) is queued for human review, while a pair scoring above the \emph{auto-merge} threshold (0.82) is merged automatically. Proposals are written with an upsert, so the same pair is never queued twice.
+
+\subsection{The Co-Visibility Boost}
+A powerful extra signal exists for overlapping cameras. If two identities are repeatedly seen \emph{at the same moments} on overlap-partner cameras---three or more independent co-visibility moments---they are almost certainly the same person viewed from two angles. For such pairs, the propose threshold is relaxed from 0.58 to 0.45, providing a backstop for splits the live matcher missed. This is the reconciliation-side counterpart to the overlap threshold of Section~6.6.
+
+\section{Spatio-Temporal Camera Constraints (Planned)}
+A natural extension, designed and reserved as the next development step, is to add \emph{spatio-temporal} constraints. A person cannot teleport: if camera~A and camera~C are thirty seconds' walk apart, a match between a person last seen at A two seconds ago and a query at C is physically impossible and should be rejected regardless of appearance similarity. The intended mechanism is a camera transition-time matrix specifying the minimum plausible travel time between each pair of camera zones; the searcher would reject any candidate whose elapsed time since last sighting falls below the minimum for that camera pair. The topology infrastructure introduced for overlap groups (Section~6.7) is the foundation this builds on, and the present overlap-aware design was deliberately structured to make spatio-temporal constraints a forward-compatible addition rather than a rewrite.
+
+\section{The Complete Identification Decision}
+Putting the pieces together, the live decision for a buffered track proceeds as follows:
+\begin{enumerate}
+    \item The embedding worker extracts the median-aggregated 512-d query vector (Chapter~5).
+    \item The FAISS index returns the top-$k$ candidate identities by max-pool cosine similarity.
+    \item For each candidate, the worker selects a threshold from Table~\ref{tab:thresholds} according to whether the candidate was last seen on the same, an overlapping, or a different camera.
+    \item If the best candidate's score clears its threshold, the track is bound to that existing identity; otherwise a new identity is created and tagged with a canonical view.
+    \item The new or updated identity is committed to SQLite, which fires the callbacks that update FAISS and enqueue a description job (Chapter~7).
+    \item Independently, the reconciliation worker later reviews the accumulated galleries and merges any duplicates it can confirm.
+\end{enumerate}
+
+\section{Summary}
+This chapter described the identity core of the system. A SQLite database is the durable source of truth; an in-memory FAISS index accelerates cosine search by a measured 916$\times$ with zero accuracy loss and a transparent fallback. Because three distinct match situations overlap in score, the live decision uses three context-aware thresholds chosen by camera topology, ordered overlap $\leq$ cross $\leq$ same, with all topology logic confined to the embedding worker. A background reconciliation worker repairs missed splits using robust mean-pool similarity, viewpoint guards, and a co-visibility boost, and the design leaves a clean path for spatio-temporal constraints. The next chapter adds a complementary, human-readable identity channel: natural-language description and semantic search.
+
+\newpage
+
+% ============================================================
+%  CHAPTER 7: NATURAL-LANGUAGE DESCRIPTION & SEMANTIC SEARCH
+% ============================================================
+\chapter{Natural-Language Description and Semantic Search}
+\setcounter{section}{0}
+
+\section{Introduction}
+Embedding-based re-identification answers ``is this the same person?'' with high accuracy, but it cannot answer a question security operators actually ask: ``have you seen a man in a red t-shirt and a white hat?'' A 512-dimensional vector is not human-readable, and it cannot be queried by description. This chapter describes the module that closes that gap: a vision-language model that writes a natural-language description of every tracked person, and a semantic search engine that retrieves people by free-text queries. Together they turn the identity database into something a human can interrogate in plain language.
+
+\section{Architecture}
+The description subsystem is built around an abstract \texttt{Describer} interface with two interchangeable backends, selected by a single configuration flag:
+\begin{itemize}
+    \item \textbf{Local backend (default):} a compact vision-language model, Qwen2.5-VL (3B), served locally through Ollama and running on CPU. This is the zero-dependency, no-cloud default.
+    \item \textbf{Remote backend (optional):} a remote GPU host running a Marlin-2B server, to which the system POSTs base64-encoded snapshots over HTTP. This is used when a GPU is available and higher throughput is wanted.
+\end{itemize}
+Both backends produce the same structured output, so the rest of the system is indifferent to which is in use.
+
+\section{Snapshot Selection}
+A person may have dozens of stored crops of varying quality. Describing a blurry one wastes effort and produces a poor description, so before each description the system selects the \emph{sharpest} available snapshot of the person through the same crop quality gate used elsewhere (Chapter~4). Describing the best available image is a small step that materially improves description quality.
+
+\section{Why a Non-Reasoning Model on CPU}
+The choice of vision-language model was constrained heavily by the CPU-only target, and it is worth recording because it was not obvious. An earlier attempt used a \emph{reasoning} VLM, which---given any image---emits a long chain of ``thinking'' tokens before answering. On a CPU with an image in context, that model generated at only a few tokens per second and took well over six minutes per description, frequently timing out, and its thinking output could not be disabled on the available runtime. Switching to a \emph{non-reasoning} model (Qwen2.5-VL 3B) that answers directly brought the cost down to roughly 20--40 seconds per person on CPU---usable as a background task. The lesson, recorded as a project invariant, is that on CPU the describer must be a non-reasoning model.
+
+\section{A Flexible, Anti-Hallucination Describer}
+The most important design property of the describer is that it must \emph{not} hallucinate. A face-only crop does not show trousers, and a model forced to fill in a fixed schema will happily invent ``brown pants''---poisoning the description and any search over it. The system therefore uses a flexible prompt that asks the model for:
+\begin{itemize}
+    \item a required, free-form \texttt{long\_description} of \emph{only what is visibly certain}; and
+    \item structured attribute keys (clothing color, type, accessories, build) \emph{only when the model is confident}, omitting any attribute it cannot see.
+\end{itemize}
+A post-processing step keeps only the keys the model actually returned and discards uncertain or placeholder values, so the stored description contains no invented detail. A short worked example in the prompt makes the model reliably produce the free-form description.
+
+\section{The Description Worker}
+Description is expensive and must never slow down identification. It is therefore performed by a dedicated background daemon that mirrors the reconciliation worker's defensive pattern. Two design rules are central:
+\begin{itemize}
+    \item \textbf{It never blocks the embedding worker.} On creating a new identity, the embedding worker drops a non-blocking hint into a bounded in-memory queue. If the queue is full, the hint is simply discarded, because the durable job is the source of truth.
+    \item \textbf{Jobs are durable.} A SQLite job table records every person needing a description; the worker claims jobs atomically, and a periodic sweep catches any person still missing a description. Jobs survive restarts, and stuck jobs are recovered at start-up.
+\end{itemize}
+The worker loop drains a hint (or sweeps for un-described persons), picks the sharpest snapshot, calls the configured backend, writes the structured description, and advances the person's ``latest description'' pointer.
+
+\section{Semantic Search}
+The retrieval side is where the descriptions become useful. Rather than match query keywords against description text---which is brittle, since ``crimson top'' would not match ``red shirt''---the system performs \emph{semantic} search. At description time, each \texttt{long\_description} is embedded into a 384-dimensional sentence vector using a sentence-transformer model (\texttt{all-MiniLM-L6-v2}) and stored alongside the description. At query time, the user's free-text query is embedded by the same model, and people are ranked by cosine similarity between the query vector and their stored description vectors:
+\[
+\text{relevance}(\text{query}, p) = \cos\!\big( \mathbf{e}_{\text{query}},\ \mathbf{e}_{\text{desc}(p)} \big).
+\]
+Because both sentences live in the same semantic space, the search matches \emph{meaning}: a query for ``red shirt'' surfaces a person described as wearing a ``crimson top,'' and paraphrases behave sensibly. This replaced an earlier keyword/synonym-table approach, which was brittle by comparison.
+
+\section{Description History and Re-Description}
+Descriptions \emph{accumulate} rather than overwrite. Every successful description inserts a new row and advances the person's latest-description pointer; older descriptions are retained. This preserves a history---useful for answering ``what was this person wearing earlier?''---and provides an audit trail. After a change to the prompt or model, a maintenance command re-describes everyone and rebuilds their semantic embeddings, and when two identities are merged, all of the removed person's description rows are re-pointed to the surviving identity in the same transaction.
+
+\section{Command-Line Interface and Example}
+The description and search features are exposed through the system's command-line interface. Representative commands are shown below.
+
+\begin{lstlisting}[language=bash]
+# Describe every person in the database that has no description yet
+python main.py --phase 4 --describe-all
+
+# Re-describe everyone and rebuild semantic embeddings (after a prompt/model change)
+python main.py --phase 4 --redescribe-all
+
+# Search by natural language
+python main.py --phase 4 --search-text "a man in a red t-shirt and white hat"
+\end{lstlisting}
+
+\noindent A natural-language query returns a ranked shortlist of matching identities, each with its stored description, snapshot, and camera history---exactly the candidate list an operator needs, retrieved by description rather than by image.
+
+\section{Summary}
+This chapter described the natural-language layer of the system. A non-reasoning vision-language model (Qwen2.5-VL on CPU by default, or a remote Marlin backend) writes a flexible, hallucination-resistant description of every tracked person, driven by a durable background worker that never blocks identification. Each description is embedded with a sentence-transformer and searched by cosine similarity, so operators can find people by meaning rather than keywords. Descriptions accumulate into a per-person history with a full audit trail. The next chapter completes the visual system with the additive face, demographic, and violence-analysis layer.
+
+\newpage
+
+% ============================================================
+%  CHAPTER 8: FACE ANALYSIS, DEMOGRAPHICS & VIOLENCE
+% ============================================================
+\chapter{Face Analysis, Demographics, and Violence Detection}
+\setcounter{section}{0}
+
+\section{Introduction}
+The chapters so far have built a complete body-based identity system. This final chapter of the visual part describes an \emph{additive} layer that enriches each identity with face-based soft biometrics and adds a behavioral threat signal. It is important to state the relationship up front: nothing in this layer ever changes who the system thinks a person is. Cross-camera identity remains 100\% body-driven (Chapters~5--6); face analysis only \emph{annotates} identities with attributes, watchlist names, and a ``returning'' badge, and violence detection runs as a fully isolated alarm. This separation is a deliberate safety property, not an accident of implementation.
+
+\section{Safety Invariants}
+Two invariants protect the integrity of body identity, and they are worth stating before the components that depend on them.
+
+\subsection{Face Never Alters Body Identity}
+The face layer is purely additive. It never binds, merges, or re-scores a person identity; it only writes attributes onto an identity that body Re-ID has already established. If the entire face layer is switched off, cross-camera identity behaves exactly as before.
+
+\subsection{Isolated Face Embeddings}
+A more subtle and critical invariant concerns storage. The face model produces 512-dimensional face embeddings---\emph{the same dimension} as the OSNet body embeddings. The body searcher, the FAISS index, and the reconciliation worker pool vectors by \emph{dimension}, not by a type label, so if face vectors were ever written into the body gallery they would silently corrupt body identity. To prevent this, face embeddings live in a strictly \textbf{isolated} table (\texttt{face\_embeddings}), and the routine that stores them deliberately does \emph{not} fire the FAISS ``embedding added'' callback. Face vectors therefore never reach the body index. This isolation is the single most important rule of the face layer.
+
+\section{Default-Off, Graceful Degradation}
+The entire layer is governed by two feature flags (\texttt{ENABLE\_FACE\_ANALYSIS} and \texttt{ENABLE\_VIOLENCE\_DETECTION}) that default to off, and each model auto-disables with a warning if its weight file is absent. With the flags off, the system is byte-for-byte the body pipeline of the previous chapters. This makes the layer safe to ship and easy to evaluate with or without it.
+
+\section{Face Detection and Embedding}
+Face analysis is built on InsightFace (the \texttt{buffalo\_l} model pack), which provides face detection, a 512-dimensional face embedding, and age and gender estimation behind a single interface. Because faces are small inside a full-body crop, each crop is upsampled (2$\times$) before face detection, and the most prominent (largest-area) face is selected. The resulting embedding is $L_2$-normalized and stored in the isolated face table for the face-image search of Section~8.8.
+
+\section{Demographic Attributes}
+On the most prominent detected face, the system estimates soft biometric attributes.
+
+\subsection{Age and Gender}
+Age and gender come directly from InsightFace. The numeric age estimate is mapped to a human-readable range (for example, ``30--45'') for storage and display, and gender is reported as male or female. These are treated strictly as probabilistic soft biometrics, never as identity (Chapter~13).
+
+\subsection{Ethnicity}
+Ethnicity is classified by a dedicated ResNet-18 whose final layer is replaced by a small two-layer head; the face crop is normalized with ImageNet statistics and resized to $224 \times 224$. The model was trained on a balanced face dataset and reaches \textbf{82.56\%} test accuracy. Because ethnicity inference is demographically sensitive and may not generalize across populations, it is gated behind the face-analysis flag and can be left disabled where the deployment context calls for it; the system is explicit about this in its documentation.
+
+\subsection{Note on Alternative Demographic Models}
+The team additionally trained stand-alone demographic classifiers---a FairFace-based gender model (99\%) and a MobileNetV2 age-range model (77.23\%)---during an earlier phase. In the current integrated pipeline these are superseded by InsightFace's built-in age and gender, which avoid a second face pass, but the stand-alone models remain available and are noted here for completeness.
+
+\section{Appearance Attributes}
+\subsection{Glasses Detection}
+Whether a person wears glasses is a useful, stable descriptor for search. A glasses classifier runs on the detected face chip and votes across the frame buffer for a stable per-person label. The deployed model is a ResNet-50 with a single sigmoid output, reaching about \textbf{90\%} accuracy. The loader is notably robust: it auto-detects the backbone depth and strips wrapper prefixes from the checkpoint, which was necessary because the delivered weights turned out to be a ResNet-50 nested under a prefix rather than the originally-assumed shallower network---without this detection the model would have silently loaded nothing.
+
+\subsection{Future Attribute Modules}
+Three further face-attribute models were trained in an earlier phase but are \emph{not} wired into the current live pipeline, and are documented here as future integrations:
+\begin{itemize}
+    \item \textbf{Emotion recognition} --- an EfficientNet classifier over seven emotions (neutral, happy, sad, fear, angry, surprise, disgust), reaching about 73\% accuracy; valuable for flagging distress (for example, a frightened lost child).
+    \item \textbf{Head-pose and occlusion estimation} --- a MobileNetV2 regressor for yaw/pitch/roll and an occlusion level (pose MAE $\approx 3.8^{\circ}$), useful for selecting frontal frames and judging face-crop reliability.
+    \item \textbf{Facial-hair detection} --- a ResNet-50 binary classifier for the presence of facial hair, another stable search descriptor.
+\end{itemize}
+Integrating these behind the same additive, isolated design as the rest of the layer is reserved as future work (Chapter~14).
+
+\section{Named Watchlist and the Returning-Person Badge}
+Beyond anonymous attributes, the face layer supports two lightweight recognition features that operate entirely by face-embedding comparison.
+\begin{itemize}
+    \item \textbf{Named watchlist:} face images placed in a known-faces folder are embedded at start-up; a live face whose cosine similarity to a watchlist entry exceeds a tolerance is annotated with that person's name.
+    \item \textbf{Returning-person badge:} a separate gallery of previously-seen face chips lets the system flag a person as ``returning'' when their face matches a stored chip, without assigning a name.
+\end{itemize}
+A watchlisted (named) person is by definition also marked returning. Both are label-only annotations layered on top of body identity; neither changes the underlying person record's identity.
+
+\section{Face-Image Search}
+The isolated face store also powers a ``find this person by their face'' query. Given a query photograph, the system extracts its face embedding and ranks stored identities by the maximum cosine similarity over each person's face embeddings:
+\[
+\text{score}_{\text{face}}(\mathbf{q}, p) = \max_{\mathbf{f} \in \text{faces}(p)} \mathbf{q} \cdot \mathbf{f} .
+\]
+This path reads \emph{only} the isolated face table---never the body gallery or the FAISS index---so face search and body identity can never interfere. A linear scan is more than adequate here, because face galleries are small and the query is interactive. The feature is invoked from the command line:
+\begin{lstlisting}[language=bash]
+# Find a person by a face photo
+python main.py --phase 3 --face-photo path/to/face.jpg
+\end{lstlisting}
+
+\section{Violence Detection}
+The visual system also includes a behavioral threat signal: a video violence detector that scores short clips for violent activity. Its architecture is a CNN-LSTM: a ResNet-50 extracts a spatial feature vector from each of sixteen $224 \times 224$ frames, a two-layer bidirectional LSTM models the temporal evolution across the clip, and a small classification head produces a single logit that is passed through a sigmoid to yield a violence probability in $[0,1]$.
+
+The detector is \textbf{fully isolated}: it runs in its own daemon thread and writes only to a violence log, alert clips, and (optionally) an email notification. It never touches the person tables, embeddings, registry, or tracking state, and it must never block detection or embedding. As with the audio alert system (Chapter~11), email credentials are read from environment variables only---never hard-coded---and the feature degrades gracefully to disabled if its credentials or model file are absent.
+
+\section{Live Verification}
+The complete face-and-attributes layer was verified end-to-end on a real person snapshot. With both flags enabled, analyzing a single crop produced an age range of 30--45, gender male, ethnicity Asian, and a glasses label, together with a 512-dimensional face embedding, while the violence model scored a frame sequence---confirming that all four model groups (InsightFace, ethnicity, glasses, and violence) load and run on CPU, and that the additive layer leaves body identity untouched.
+
+\section{Summary}
+This chapter described the additive enrichment layer of the visual system. Built on InsightFace, it annotates each body identity with age, gender, ethnicity (82.56\%), glasses (90\%), a watchlist name, and a returning badge, and it offers a face-image search path---all while keeping face embeddings in a strictly isolated store so that body identity can never be corrupted. A separate, fully isolated CNN-LSTM violence detector adds a behavioral threat signal with its own logging and alerting. Three further face-attribute models (emotion, head-pose, facial-hair) are trained and reserved for future integration. With this chapter, the visual analysis system is complete; the next part of the report turns to the audio processing pipeline.
+
+\newpage
+
+% ============================================================
+%  PART III: AUDIO PROCESSING PIPELINE
+% ============================================================
+\part{Audio Processing Pipeline}
+
+% ============================================================
+%  CHAPTER 8: AUDIO PIPELINE & SPEECH RECOGNITION
+% ============================================================
+\chapter{Audio Pipeline and Speech Recognition}
+\setcounter{section}{0}
+
+\section{Introduction}
+
+Audio processing represents one of the fundamental components of the proposed AI-Based Intelligent Surveillance System because it enables the extraction of meaningful information from spoken interactions occurring in monitored environments. While conventional surveillance systems primarily rely on visual monitoring, modern intelligent surveillance requires the integration of audio intelligence to improve situational awareness, identify speakers, understand conversations, detect threats, and support multilingual environments.
+
+The audio processing subsystem developed in this project was designed to provide a complete end-to-end pipeline for speech understanding and speaker identification. The implemented framework combines real-time audio acquisition, automatic speech recognition, speaker recognition, language-aware processing, and intelligent threat analysis into a unified architecture. The system was specifically optimized to operate efficiently in real-time surveillance scenarios while maintaining high transcription accuracy and robust speaker verification.
+
+The proposed audio pipeline consists of five major stages:
+\begin{itemize}
+    \item \textbf{Audio Capture}, responsible for recording audio signals from microphones.
+    \item \textbf{Speaker Recognition}, which identifies the individual speaking using biometric voice embeddings.
+    \item \textbf{Speech-to-Text (STT)}, which converts spoken audio into textual content.
+    \item \textbf{Language Detection and Translation}, enabling multilingual support.
+    \item \textbf{Violence Detection and Alerting}, which identifies dangerous speech content and generates security notifications.
+\end{itemize}
+
+The architecture was implemented using several state-of-the-art artificial intelligence frameworks including PyAudio, OpenAI Whisper large-v3, SpeechBrain ECAPA-TDNN, Transformers MarianMT, and additional language processing libraries. The integration of these technologies allows the system to function as an intelligent multilingual surveillance solution capable of identifying speakers and detecting potentially dangerous situations in real time.
+
+\section{Audio Processing Pipeline Architecture}
+
+The proposed audio processing system follows a hierarchical multi-stage architecture where each module performs a specialized task before passing its output to the next stage.
+
+The implemented workflow begins by capturing audio either through fixed-duration recording or silence-aware recording. After audio acquisition, the speaker recognition module extracts voice embeddings and compares them against stored speaker profiles. The speech recognition module then converts speech into text using Whisper large-v3. Finally, higher-level semantic analysis modules process the transcribed content for language classification and violence detection.
+
+The complete audio pipeline can be summarized as follows:
+\begin{center}
+Audio Input $\rightarrow$ Speaker Identification $\rightarrow$ Speech Recognition $\rightarrow$ Language Analysis $\rightarrow$ Translation $\rightarrow$ Violence Detection $\rightarrow$ Alert Generation
+\end{center}
+
+The modular design ensures that each subsystem can function independently while maintaining interoperability with the complete surveillance framework. This architecture provides flexibility, scalability, and ease of maintenance.
+
+\subsection{Advantages of the Proposed Architecture}
+The proposed architecture offers several advantages:
+\begin{itemize}
+    \item Real-time processing capability, enabling immediate speech analysis.
+    \item High transcription accuracy through Whisper large-v3.
+    \item Robust speaker recognition using ECAPA-TDNN embeddings.
+    \item Multilingual support, allowing communication monitoring across languages.
+    \item Threat awareness, enabling automatic violence detection.
+    \item Scalable modular design, facilitating future extensions.
+\end{itemize}
+
+\section{Audio Acquisition and Capture}
+
+Audio acquisition represents the first stage of the processing pipeline. The system captures sound signals using microphones connected to the surveillance platform. To achieve reliable performance in different environments, two recording modes were implemented.
+
+\subsection{Fixed-Duration Recording}
+
+In fixed-duration mode, audio is captured for a predefined duration. The implementation uses a default recording interval of five seconds, although the duration can be modified according to surveillance requirements.
+
+The recorded signal is sampled using the following parameters:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Parameter} & \textbf{Value} \\
+\hline
+Sampling Rate & 16,000 Hz \\
+\hline
+Channels & 1 (Mono) \\
+\hline
+Chunk Size & 1024 \\
+\hline
+Audio Format & 16-bit PCM \\
+\hline
+Default Duration & 5 Seconds \\
+\hline
+\end{tabular}
+\caption{Fixed-Duration Recording Parameters}
+\end{table}
+
+The choice of a 16 kHz sampling frequency was motivated by the fact that speech information is primarily concentrated below 8 kHz, according to the Nyquist theorem. Therefore, a 16 kHz sampling rate provides sufficient quality for speech recognition while reducing computational cost.
+
+The audio signal is continuously divided into chunks of size 1024 samples, which are sequentially buffered and stored in memory until recording completion. After recording, the chunks are merged and saved into a temporary WAV file for downstream processing.
+
+\subsection{Silence-Based Recording}
+
+In surveillance applications, fixed recording may capture unnecessary silence and increase computational overhead. To address this issue, a silence-aware recording mechanism was implemented.
+
+Instead of recording for a fixed duration, the system continuously listens to environmental audio and automatically terminates recording when prolonged silence is detected.
+
+The silence detection process relies on Root Mean Square (RMS) energy estimation. The RMS energy of an audio signal is computed as:
+\[
+\text{RMS} = \sqrt{\frac{1}{N} \sum_{i=1}^{N} x_i^2}
+\]
+where $x_i$ represents the amplitude of each audio sample and $N$ denotes the total number of samples.
+
+When the RMS energy falls below a predefined silence threshold, the system considers the environment silent. A silence counter is incremented until a predefined silence duration is reached, after which recording stops automatically.
+
+\subsubsection{Benefits of Silence-Based Recording}
+The silence-based mechanism provides multiple benefits:
+\begin{itemize}
+    \item Reduces unnecessary processing.
+    \item Eliminates long silent recordings.
+    \item Improves computational efficiency.
+    \item Enables adaptive recording in real-world environments.
+\end{itemize}
+
+\section{Audio Signal Preprocessing}
+
+Before higher-level analysis, the captured audio signal undergoes preprocessing to ensure consistency across different recording devices and acoustic conditions.
+
+\subsection{Resampling}
+
+Audio signals may originate from devices with varying sampling frequencies. Therefore, the system normalizes all audio signals to 16 kHz. Resampling ensures compatibility between input audio and machine learning models such as Whisper and ECAPA-TDNN, both of which were optimized for standardized speech representations.
+
+\subsection{Mono Channel Conversion}
+
+Multi-channel recordings can introduce inconsistencies during feature extraction. To overcome this limitation, stereo recordings are converted into a mono representation by averaging channels:
+\[
+x_{\text{mono}} = \frac{x_{\text{left}} + x_{\text{right}}}{2}
+\]
+This operation guarantees consistent audio representation during embedding generation.
+
+\subsection{Temporary Audio Storage}
+
+After preprocessing, the audio stream is stored temporarily in WAV format. This intermediate representation facilitates interoperability between different processing modules such as speaker recognition and speech recognition.
+
+\section{Speaker Recognition Using ECAPA-TDNN}
+
+Speaker recognition is a biometric authentication process used to identify individuals based on unique vocal characteristics. In surveillance systems, speaker identification enhances contextual understanding and improves forensic investigation capabilities.
+
+The proposed system employs the ECAPA-TDNN (Emphasized Channel Attention, Propagation and Aggregation Time Delay Neural Network) architecture implemented through the SpeechBrain framework. The selected pretrained model was \texttt{speechbrain/spkrec-ecapa-voxceleb}, trained on the VoxCeleb dataset and demonstrating state-of-the-art performance in speaker verification tasks.
+
+ECAPA-TDNN was selected because it offers high speaker verification accuracy, strong robustness against environmental noise, efficient embedding extraction, and excellent performance in real-world speech environments. Unlike traditional handcrafted voice features such as MFCCs, ECAPA-TDNN learns highly discriminative speaker representations automatically.
+
+\subsection{ECAPA-TDNN Architecture}
+
+The ECAPA-TDNN model generates high-dimensional speaker embeddings from input speech signals. These embeddings represent compact numerical vectors that encode speaker identity information. During enrollment, multiple embeddings are collected from an individual speaker and averaged to form a speaker profile centroid. During inference, newly extracted embeddings are compared against stored centroids to determine identity.
+
+The ECAPA-TDNN model improves upon traditional TDNN architectures through three major mechanisms:
+
+\subsubsection{Channel Attention Mechanism}
+Channel attention allows the model to focus on the most discriminative speaker-related information within speech features. This process improves robustness in noisy environments because irrelevant acoustic information receives lower importance during feature extraction.
+
+\subsubsection{Propagation Mechanism}
+Feature propagation enhances contextual learning by allowing deeper layers to access information from previous network layers. This improves feature representation and increases speaker discrimination performance.
+
+\subsubsection{Temporal Aggregation}
+Temporal aggregation combines speech information across time, allowing the model to capture long-term vocal patterns such as speaking rhythm, pitch variation, pronunciation style, and vocal resonance. These characteristics significantly improve speaker identification accuracy in surveillance applications.
+
+\section{Speaker Enrollment and Data Augmentation}
+
+Before speaker identification can be performed, the system requires an enrollment phase in which speaker voice profiles are created and stored.
+
+\subsection{Speaker Enrollment Process}
+
+During enrollment, the system accepts one or multiple speech recordings from an individual speaker. Each audio sample undergoes preprocessing and embedding extraction through ECAPA-TDNN. The extracted embeddings are stored and averaged to create a stable speaker representation called a speaker centroid:
+\[
+C = \frac{1}{N} \sum_{i=1}^{N} E_i
+\]
+where $C$ represents the speaker centroid, $E_i$ denotes the embedding vector extracted from sample $i$, and $N$ represents the total number of recordings. The resulting centroid serves as the reference representation of the speaker.
+
+\subsection{Audio Augmentation Strategy}
+
+One challenge in speaker recognition systems is limited enrollment data. To improve robustness, the implemented system introduces automatic data augmentation during enrollment using two techniques:
+
+\subsubsection{Pitch Shifting}
+Pitch shifting artificially modifies vocal frequency while preserving speaker identity. Multiple pitch levels are generated: $-2$ semitones, $-1$ semitone, $+1$ semitone, and $+2$ semitones. This allows the system to generalize better to voice variations caused by mood, fatigue, or microphone conditions.
+
+\subsubsection{Time Stretching}
+Time stretching changes speech speed while preserving vocal pitch. The following stretch factors are used: $0.90\times$, $0.95\times$, $1.05\times$, and $1.10\times$. These augmentations improve system resilience against variations in speaking speed and significantly increase enrollment diversity.
+
+\section{Speaker Identification Using Cosine Similarity}
+
+After enrollment, speaker identification is performed by comparing incoming voice embeddings with stored speaker centroids using cosine similarity:
+\[
+\text{Similarity}(A, B) = \frac{A \cdot B}{\|A\| \|B\|}
+\]
+where $A$ is the query embedding, $B$ is the enrolled speaker centroid, $A \cdot B$ represents the dot product, and $\|A\|$ and $\|B\|$ represent vector magnitudes. The similarity value ranges from 1 (identical embeddings) to $-1$ (completely opposite representations).
+
+\subsection{Dynamic Thresholding}
+
+Instead of using a fixed threshold for all speakers, the proposed implementation employs speaker-specific thresholds dynamically computed during enrollment:
+\[
+\text{Threshold} = \max(0.25,\ \mu - 2.5\sigma)
+\]
+where $\mu$ represents the mean cosine similarity during enrollment and $\sigma$ represents the standard deviation. This adaptive threshold improves recognition reliability because each speaker possesses unique vocal consistency.
+
+\subsection{Identification Decision}
+
+The speaker with the highest similarity score is selected. If the similarity exceeds the stored threshold, the speaker is accepted; otherwise, the result is reported as ``Unknown Person.'' This strategy minimizes false positive identification and prevents unauthorized speaker matching.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Parameter} & \textbf{Value} \\
+\hline
+Pre-trained model & speechbrain/spkrec-ecapa-voxceleb \\
+\hline
+Embedding dimension & 192 \\
+\hline
+Similarity metric & Cosine similarity \\
+\hline
+Default global threshold & 0.60 \\
+\hline
+Augmentation & Pitch shift + time stretch \\
+\hline
+Storage format & Pickle (.pkl) \\
+\hline
+\end{tabular}
+\caption{ECAPA-TDNN Speaker Recognition Configuration}
+\end{table}
+
+\section{Speech-to-Text Using Whisper Large-v3}
+
+Speech recognition is responsible for converting spoken language into machine-readable text. The implemented system uses OpenAI Whisper large-v3, which is among the most accurate multilingual automatic speech recognition models currently available.
+
+\subsection{Why Whisper Large-v3?}
+
+Whisper large-v3 was selected due to several advantages:
+\begin{itemize}
+    \item Exceptional multilingual transcription accuracy.
+    \item Built-in language detection.
+    \item Robustness against noisy environments.
+    \item Support for low-resource languages.
+    \item Strong performance in surveillance scenarios.
+\end{itemize}
+
+Unlike conventional speech recognition systems, Whisper directly learns from large-scale multilingual speech corpora, enabling generalization across accents and dialects.
+
+\subsection{Language Detection}
+
+A key advantage of Whisper is its ability to detect spoken language directly from acoustic signals. Instead of relying solely on transcribed text, Whisper analyzes audio spectrograms and returns a probability distribution across 99 supported languages. The system extracts the most probable language, its confidence score, and the top language probabilities. This language prediction is later integrated into the hierarchical language classification framework.
+
+\subsection{Confidence Estimation}
+
+The confidence of speech recognition is estimated using the average logarithmic probability generated across speech segments:
+\[
+\text{Confidence} = e^{\text{AvgLogProb}}
+\]
+where $\text{AvgLogProb}$ represents the average log probability across transcription segments. Higher confidence values indicate more reliable speech recognition output.
+
+\subsection{GPU Acceleration}
+
+To improve computational performance, the system automatically detects available hardware. When a CUDA-enabled GPU is available, Whisper executes on the GPU; otherwise, CPU execution is used. This adaptive design improves portability and allows deployment on different hardware environments.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Parameter} & \textbf{Value} \\
+\hline
+Model & Whisper large-v3 \\
+\hline
+Beam Size & 5 \\
+\hline
+Best-of & 5 \\
+\hline
+Temperature & 0 \\
+\hline
+Word Timestamps & Enabled \\
+\hline
+No Speech Threshold & 0.6 \\
+\hline
+\end{tabular}
+\caption{Whisper large-v3 Configuration Parameters}
+\label{tab:whisper_params}
+\end{table}
+
+\section{Mathematical Formulation of the Audio Pipeline}
+
+The proposed audio processing pipeline can be mathematically summarized through its core components:
+
+\subsubsection{Audio Capture}
+The input audio signal:
+\[
+x(t) = A\sin(2\pi f t + \phi)
+\]
+where $A$ is signal amplitude, $f$ is frequency, and $\phi$ is phase.
+
+\subsubsection{RMS Energy (Silence Detection)}
+\[
+\text{RMS} = \sqrt{\frac{1}{N} \sum_{i=1}^{N} x_i^2}
+\]
+
+\subsubsection{Speaker Embedding Similarity}
+\[
+\text{CosineSimilarity} = \frac{A \cdot B}{\|A\| \|B\|}
+\]
+
+\subsubsection{Transcription Confidence}
+\[
+\text{Confidence} = e^{\text{AvgLogProb}}
+\]
+
+These formulations collectively describe the mathematical foundations of the implemented audio processing framework.
+
+\section{Azure Speech Backend (Alternative)}
+For deployments requiring cloud-based transcription, the pipeline supports Microsoft Azure Cognitive Services Speech as an alternative backend. When selected, the system forwards the WAV file to the Azure Speech Recognition API and returns the transcribed text. This backend is particularly useful when on-device GPU resources are unavailable.
+
+\section{Summary}
+
+This chapter presented the design and implementation of the speech recognition and audio processing subsystem. The proposed architecture integrates audio acquisition, speaker recognition, and multilingual speech transcription into a unified processing pipeline. The system utilizes PyAudio for real-time audio capture, supports both fixed-duration and silence-based recording modes, and applies RMS-based silence detection for efficient audio acquisition. Speaker recognition is performed using ECAPA-TDNN, enabling robust biometric speaker identification through embedding extraction and cosine similarity matching. Furthermore, Whisper large-v3 was employed for multilingual speech recognition, providing highly accurate transcriptions together with language probability estimation. The implemented subsystem forms a critical foundation for subsequent stages of the surveillance system, including language detection, translation, and violence analysis, which are discussed in the following chapter.
+
+\newpage
+
+% ============================================================
+%  CHAPTER 9: LANGUAGE DETECTION & REAL-TIME TRANSLATION
+% ============================================================
+\chapter{Language Detection and Real-Time Translation}
+\setcounter{section}{0}
+
+\section{Introduction}
+
+In intelligent surveillance systems, understanding spoken content is not limited to converting speech into text. Real-world environments often involve multilingual communication where individuals may speak different languages, dialects, or scripts. Therefore, an advanced surveillance framework must not only recognize speech but also determine the spoken language and translate it into a unified target language for effective monitoring.
+
+Traditional language detection systems primarily depend on text analysis after transcription. However, text-based approaches frequently encounter ambiguity when dealing with short utterances, multilingual speech, or linguistically similar languages such as French and Dutch or Spanish and Portuguese. To overcome these limitations, the proposed surveillance system implements a hierarchical language detection framework that combines acoustic analysis, text-based classification, script detection, and confidence-based decision fusion.
+
+The proposed implementation adopts a Whisper-first hierarchical classification strategy, where language identification begins with Unicode script analysis, followed by Whisper large-v3 acoustic language detection, and finally ensemble text classification using multiple language recognition engines. This layered architecture improves robustness and significantly increases classification accuracy in multilingual surveillance environments.
+
+After language identification, the system performs real-time machine translation using MarianMT neural translation models, with automatic fallback to Google Translate whenever a dedicated translation model is unavailable.
+
+\section{Language Processing Architecture}
+
+The proposed language processing subsystem follows a multi-stage architecture designed to maximize reliability and accuracy. The workflow begins after speech transcription has been generated by Whisper large-v3. The transcribed text and acoustic language probabilities are passed to the hierarchical language classifier. Based on confidence levels, the classifier determines the most probable spoken language.
+
+The detected language is subsequently used to:
+\begin{itemize}
+    \item Enable multilingual violence detection,
+    \item Select the optimal translation engine,
+    \item Translate text into a target language,
+    \item Support multilingual surveillance monitoring.
+\end{itemize}
+
+The complete workflow is:
+\begin{center}
+Speech Transcription $\rightarrow$ Script Detection $\rightarrow$ Whisper Language Analysis $\rightarrow$ Text Ensemble Classification $\rightarrow$ Confidence Blending $\rightarrow$ Translation $\rightarrow$ Threat Analysis
+\end{center}
+
+\subsection{Advantages of the Proposed Framework}
+\begin{itemize}
+    \item High multilingual recognition accuracy.
+    \item Robust performance for short speech segments.
+    \item Reduced confusion between similar languages.
+    \item Real-time translation support.
+    \item Adaptability to different surveillance environments.
+    \item Improved multilingual threat analysis.
+\end{itemize}
+
+\section{Hierarchical Language Detection Framework}
+
+One major contribution of this work is the implementation of a hierarchical language classifier rather than relying on a single prediction engine. Instead of making decisions based solely on text or audio, the proposed framework combines multiple information sources according to their reliability.
+
+The language detection hierarchy consists of three levels:
+\begin{itemize}
+    \item \textbf{Level 1 --- Unicode Script Heuristic:} Fast and highly reliable script-based detection.
+    \item \textbf{Level 2 --- Whisper Acoustic Language Detection:} Primary language prediction based on speech acoustics.
+    \item \textbf{Level 3 --- Ensemble Text Classification:} Backup mechanism using multiple text engines.
+\end{itemize}
+
+This hierarchy improves classification accuracy while reducing misclassification in multilingual scenarios. For example, Whisper acoustic detection successfully differentiates French from Dutch, which text-only systems often confuse.
+
+\section{Unicode Script Heuristic}
+
+The first stage of language detection involves identifying the dominant writing system used in the transcribed text. Certain languages employ highly distinctive scripts that can be recognized almost perfectly without advanced machine learning:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Script} & \textbf{Language} \\
+\hline
+Arabic & Arabic \\
+\hline
+Hebrew & Hebrew \\
+\hline
+Devanagari & Hindi \\
+\hline
+Hangul & Korean \\
+\hline
+Greek & Greek \\
+\hline
+Cyrillic & Russian \\
+\hline
+Chinese Characters & Chinese \\
+\hline
+Kana + Kanji & Japanese \\
+\hline
+\end{tabular}
+\caption{Unicode Script to Language Mapping}
+\end{table}
+
+The implemented system counts character frequencies from Unicode ranges and determines the dominant script present in the text. The script dominance ratio is calculated as:
+\[
+\text{Dominance} = \frac{N_{\text{script}}}{N_{\text{total}}}
+\]
+where $N_{\text{script}}$ represents characters belonging to a specific script and $N_{\text{total}}$ denotes total detected characters. If script dominance exceeds 60\%, the language is classified immediately. This method provides near-perfect performance for non-Latin languages because scripts such as Arabic or Korean are unique to specific linguistic families.
+
+\subsection{Benefits of Script-Based Detection}
+\begin{itemize}
+    \item Extremely fast execution.
+    \item High reliability.
+    \item Minimal computational cost.
+    \item Immediate language recognition for non-Latin scripts.
+\end{itemize}
+
+\section{Whisper-Based Language Detection}
+
+After script detection, the second stage employs Whisper large-v3 acoustic language detection, which represents the primary language identification mechanism. Unlike conventional methods that classify languages from text, Whisper analyzes audio spectrograms directly, exploiting acoustic characteristics such as pronunciation style, phonetic structure, acoustic rhythm, and language-specific speech patterns.
+
+The Whisper model returns a probability distribution across 99 supported languages. The most probable language is selected:
+\[
+L^* = \arg\max_L P(L \mid A)
+\]
+where $L^*$ is the predicted language and $P(L \mid A)$ is the probability of language $L$ given audio signal $A$.
+
+\subsection{Confidence Threshold Strategy}
+
+The proposed implementation introduces two confidence thresholds:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Threshold} & \textbf{Value} \\
+\hline
+High Confidence & 0.85 \\
+\hline
+Low Confidence & 0.40 \\
+\hline
+\end{tabular}
+\caption{Whisper Confidence Thresholds}
+\end{table}
+
+When Whisper confidence exceeds 0.85, the system trusts Whisper completely. If confidence falls between 0.40 and 0.85, Whisper is blended with text engines. When confidence is below 0.40, text engines dominate classification.
+
+\section{Text-Based Ensemble Classification}
+
+Although Whisper provides highly accurate language detection, some situations may still produce uncertainty, particularly in short speech segments. To improve robustness, the system integrates multiple text classification engines.
+
+\subsection{LangDetect Engine}
+The langdetect library provides probabilistic language classification based on statistical text analysis. Its prediction confidence contributes significantly to final classification.
+
+\subsection{LangID Engine}
+The langid classifier offers language identification optimized for short texts. Its confidence values are normalized to ensure compatibility with other engines.
+
+\subsection{Trigram Language Heuristics}
+A lightweight trigram scoring mechanism was implemented to improve recognition reliability. Each language contains common linguistic patterns (e.g., English: \textit{the, ing, tion}; French: \textit{les, eau, aux}; German: \textit{sch, ung, ich}). The trigram score is calculated as:
+\[
+\text{Score}(L) = \frac{M_L}{T_L}
+\]
+where $M_L$ represents matched trigrams and $T_L$ denotes total language trigrams.
+
+\subsection{Weighted Soft Voting}
+
+The system combines predictions using weighted soft voting:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|p{7cm}|}
+\hline
+\textbf{Engine} & \textbf{Weight} & \textbf{Notes} \\
+\hline
+LangDetect & 0.45 & Statistical n-gram model; seeded for determinism \\
+\hline
+LangID & 0.40 & Naive Bayes classifier; fast and reliable \\
+\hline
+Trigram Heuristic & 0.15 & Custom per-language trigram hints \\
+\hline
+\end{tabular}
+\caption{Text Engine Weights in Soft Vote Mode}
+\end{table}
+
+The combined probability is:
+\[
+P(L) = \frac{\sum_i w_i P_i(L)}{\sum_i w_i}
+\]
+where $w_i$ is engine weight and $P_i(L)$ is engine probability. This ensemble approach improves stability and reduces classification uncertainty.
+
+\section{Confidence Blending and Temporal Smoothing}
+
+When Whisper confidence lies in the intermediate range, the system blends Whisper predictions with text-based probabilities:
+\[
+P_{\text{blend}} = w_w P_w + w_t P_t
+\]
+where $P_w$ represents Whisper probability, $P_t$ represents text-engine probability, $w_w$ is the Whisper weight, and $w_t$ is the text weight. The Whisper contribution dynamically increases as confidence rises.
+
+To prevent unstable language switching, the system applies history-based temporal smoothing. Recent predictions are stored and accumulated:
+\[
+L_t = \arg\max \sum_{i=1}^{n} \text{Confidence}_i
+\]
+This smoothing mechanism improves consistency during continuous speech monitoring.
+
+\section{Real-Time Translation Using MarianMT}
+
+Following language detection, the system performs neural machine translation using MarianMT, an open-source neural translation framework developed by Helsinki-NLP.
+
+\subsection{Architecture: MarianMT + Google Fallback}
+Translation follows a two-tier approach:
+\begin{enumerate}
+    \item \textbf{MarianMT (Primary):} Helsinki-NLP's MarianMT models are loaded on demand and cached for subsequent calls. Inference uses beam search with 5 beams and a maximum output length of 512 tokens.
+    \item \textbf{Google Translate (Fallback):} When no MarianMT model exists for the required language pair, Google Translate via the \texttt{deep-translator} library is used as a reliable cloud fallback.
+\end{enumerate}
+
+\subsection{Supported MarianMT Language Pairs}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Source} & \textbf{Target} & \textbf{Model} \\
+\hline
+French & English & Helsinki-NLP/opus-mt-fr-en \\
+\hline
+Arabic & English & Helsinki-NLP/opus-mt-ar-en \\
+\hline
+German & English & Helsinki-NLP/opus-mt-de-en \\
+\hline
+Spanish & English & Helsinki-NLP/opus-mt-es-en \\
+\hline
+Russian & English & Helsinki-NLP/opus-mt-ru-en \\
+\hline
+Chinese & English & Helsinki-NLP/opus-mt-zh-en \\
+\hline
+Japanese & English & Helsinki-NLP/opus-mt-ja-en \\
+\hline
+English & Arabic & Helsinki-NLP/opus-mt-en-ar \\
+\hline
+English & French & Helsinki-NLP/opus-mt-en-fr \\
+\hline
+French & Arabic & Helsinki-NLP/opus-mt-fr-ar \\
+\hline
+\end{tabular}
+\caption{Selected Supported MarianMT Language Pairs}
+\label{tab:marian_pairs}
+\end{table}
+
+\subsection{Language Code Normalization}
+Before translation, language codes are normalized to handle aliases: \texttt{zh-cn} $\rightarrow$ \texttt{zh}, \texttt{jap} $\rightarrow$ \texttt{ja}, \texttt{por} $\rightarrow$ \texttt{pt}, \texttt{deu} $\rightarrow$ \texttt{de}, \texttt{fra} $\rightarrow$ \texttt{fr}, etc. This ensures consistent model selection regardless of the input code format.
+
+\subsection{Passthrough Mode}
+When the detected source language matches the target translation language, no translation is performed and the original text is returned directly as the output with engine label \texttt{passthrough}.
+
+\section{Right-to-Left Language Handling}
+
+Special formatting challenges arise for right-to-left (RTL) languages such as Arabic, Hebrew, Persian, and Urdu. To address text display issues, the system inserts Unicode RTL markers around transcription output, ensuring correct visual rendering during terminal display and reporting. The implemented solution significantly improves readability for multilingual surveillance operators.
+
+\section{Integration with the Full Pipeline}
+
+The language classifier and translator are invoked sequentially after Whisper transcription:
+\begin{enumerate}
+    \item Whisper's \texttt{language\_probs} dictionary is passed directly to \texttt{LanguageClassifier.classify()}.
+    \item The classifier returns a result dict including \texttt{language\_code}, \texttt{confidence}, \texttt{method}, and \texttt{engines\_used}.
+    \item If translation is enabled, \texttt{RealTimeTranslator.translate()} is called with the detected language code.
+    \item The detected language code is forwarded to the violence detector (Chapter~\ref{ch:violence-keyword}) for language-appropriate keyword selection.
+\end{enumerate}
+
+\section{Mathematical Formulation Summary}
+
+\subsubsection{Script Dominance}
+\[
+\text{Dominance} = \frac{N_{\text{script}}}{N_{\text{total}}}
+\]
+
+\subsubsection{Whisper Language Prediction}
+\[
+L^* = \arg\max_L P(L \mid A)
+\]
+
+\subsubsection{Ensemble Classification}
+\[
+P(L) = \frac{\sum_i w_i P_i(L)}{\sum_i w_i}
+\]
+
+\subsubsection{Confidence Blending}
+\[
+P_{\text{blend}} = w_w P_w + w_t P_t
+\]
+
+\subsubsection{Temporal Smoothing}
+\[
+L_t = \arg\max \sum_{i=1}^{n} \text{Confidence}_i
+\]
+
+\section{Summary}
+
+This chapter presented the multilingual language detection and real-time translation subsystem. The proposed implementation introduced a hierarchical Whisper-first classification strategy combining Unicode script analysis, acoustic language detection, and ensemble text classification. The system leveraged Whisper large-v3 as the primary language detector while integrating langdetect, langid, and trigram heuristics for improved robustness. Confidence-based blending and temporal smoothing further enhanced prediction stability. Furthermore, MarianMT neural translation models were integrated to provide multilingual translation support, while a Google Translate fallback mechanism ensured continuous operation across unsupported language pairs. The multilingual capabilities presented in this chapter provide the foundation for semantic speech understanding and multilingual threat analysis, which are explored in the following chapter.
+
+\newpage
+
+% ============================================================
+%  CHAPTER 10: VIOLENCE KEYWORD DETECTION & ALERT SYSTEM
+% ============================================================
+\chapter{Violence Keyword Detection and Alert System}
+\label{ch:violence-keyword}
+\setcounter{section}{0}
+
+\section{Introduction}
+
+Modern intelligent surveillance systems must go beyond passive monitoring and provide proactive threat detection capabilities. Traditional surveillance systems primarily focus on recording incidents after they occur, which limits their ability to prevent dangerous situations. Consequently, intelligent monitoring frameworks increasingly require automated mechanisms capable of identifying suspicious behavior and generating immediate alerts.
+
+Speech content represents a valuable source of contextual information in surveillance environments because verbal communication often precedes violent incidents, threats, or criminal activities. Words associated with aggression, weapons, violence, terrorism, or physical harm may indicate elevated risk levels that require immediate attention.
+
+To address this challenge, the proposed surveillance system incorporates an intelligent multilingual violence detection and alert subsystem capable of analyzing transcribed speech content in real time. The subsystem automatically identifies violence-related keywords across multiple languages and generates security alerts whenever suspicious speech is detected. Unlike traditional keyword matching systems limited to English, the proposed implementation supports multilingual violence detection across more than thirty languages, enabling threat analysis in globally diverse environments.
+
+\section{Violence Detection System Architecture}
+
+The proposed violence detection module follows a layered processing architecture integrated into the overall audio surveillance pipeline. After speech transcription and language classification have been completed, the transcribed text is forwarded to the violence detection subsystem. The module first determines the detected language and dynamically loads corresponding violence-related keywords. The system then scans the transcription using language-aware matching techniques.
+
+The violence detection workflow can be summarized as:
+\begin{center}
+Speech Recognition $\rightarrow$ Language Detection $\rightarrow$ Keyword Selection $\rightarrow$ Threat Analysis $\rightarrow$ Alert Generation $\rightarrow$ Security Notification
+\end{center}
+
+\subsection{Advantages of the Proposed Design}
+\begin{itemize}
+    \item Real-time threat identification.
+    \item Multilingual speech monitoring.
+    \item Immediate notification generation.
+    \item Language-aware keyword matching.
+    \item Scalability for future languages.
+    \item Low computational overhead.
+\end{itemize}
+
+\section{Multilingual Violence Detection Framework}
+
+A major limitation of traditional surveillance systems is language dependency. Many conventional systems rely exclusively on English keywords, making them ineffective in multilingual environments. To overcome this issue, the proposed implementation introduces a multilingual violence keyword framework supporting over thirty languages.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|l|l|}
+\hline
+\textbf{Language} & \textbf{ISO Code} & \textbf{Language} & \textbf{ISO Code} \\
+\hline
+English & en & Turkish & tr \\
+\hline
+Arabic & ar & Greek & el \\
+\hline
+French & fr & Persian & fa \\
+\hline
+German & de & Bengali & bn \\
+\hline
+Spanish & es & Vietnamese & vi \\
+\hline
+Italian & it & Thai & th \\
+\hline
+Portuguese & pt & Hebrew & he \\
+\hline
+Russian & ru & Ukrainian & uk \\
+\hline
+Chinese & zh & Polish & pl \\
+\hline
+Japanese & ja & Swedish & sv \\
+\hline
+Korean & ko & Danish & da \\
+\hline
+Hindi & hi & Norwegian & no \\
+\hline
+\end{tabular}
+\caption{Supported Languages for Violence Keyword Detection}
+\end{table}
+
+Each language contains a predefined set of violence-related expressions covering physical violence, weapons, terrorism, explosions, murder, threats, bloodshed, and armed conflict. The English baseline includes 13 core threat-related terms:
+\begin{center}
+\texttt{kill, attack, bomb, gun, shoot, knife, fight, terror, explosion, murder, dead, blood, threat}
+\end{center}
+
+\section{Language-Aware Keyword Selection}
+
+After language detection, the system dynamically selects violence keywords corresponding to the detected language. Instead of scanning every language simultaneously, the implementation optimizes efficiency by selecting the English baseline keywords and the keywords of the detected language:
+\[
+K_{\text{final}} = K_{\text{English}} \cup K_{\text{Language}}
+\]
+where $K_{\text{English}}$ denotes English baseline keywords and $K_{\text{Language}}$ represents language-specific keywords. The union of both keyword sets improves robustness because some multilingual conversations may include mixed-language speech.
+
+\section{Threat Detection Methodology}
+
+The implemented threat detection mechanism analyzes transcribed speech and searches for suspicious terms indicating potential violence. The system uses two different matching approaches depending on language characteristics.
+
+\subsection{Latin Script Languages}
+
+For Latin-based languages such as English, French, German, and Spanish, the system employs whole-word regular expression matching:
+\[
+\texttt{re.search(r"\textbackslash b\{keyword\}\textbackslash b", text.lower())}
+\]
+Word-boundary matching ensures accurate detection while reducing false positives. For example, the keyword ``gun'' would match ``He has a gun'' but not ``gunning''.
+
+\subsection{Non-Latin Script Languages}
+
+Languages such as Arabic, Chinese, Japanese, Korean, Hebrew, and Persian do not always rely on conventional whitespace boundaries. Therefore, regular expressions based on word boundaries become unreliable. To solve this issue, the system uses substring matching for non-Latin scripts:
+\[
+\text{Threat} = \begin{cases} 1, & \text{Keyword} \in \text{Text} \\ 0, & \text{Otherwise} \end{cases}
+\]
+This adaptive strategy ensures reliable multilingual detection.
+
+\section{Threat Detection Workflow}
+
+The threat analysis workflow consists of the following sequential stages:
+\begin{enumerate}
+    \item \textbf{Audio Capture:} Audio is captured from surveillance microphones.
+    \item \textbf{Speech Transcription:} Whisper large-v3 converts speech into text.
+    \item \textbf{Language Identification:} The language classifier determines the spoken language.
+    \item \textbf{Keyword Retrieval:} Language-specific violence keywords are loaded.
+    \item \textbf{Text Scanning:} Speech content is scanned for suspicious keywords.
+    \item \textbf{Threat Decision:} If suspicious words are found, a threat is flagged; otherwise, the conversation is considered safe.
+    \item \textbf{Alert Transmission:} Detected threats trigger an automated email notification.
+\end{enumerate}
+
+\section{Email-Based Security Alert System}
+
+One of the key contributions of this work is the implementation of an automated alert generation mechanism. Whenever suspicious speech is detected, the system immediately sends a formatted email notification to designated recipients.
+
+\subsection{Alert Trigger}
+An alert is triggered when matched keywords are found. The alert contains:
+\begin{itemize}
+    \item Timestamp of detection.
+    \item Identified speaker name (from ECAPA-TDNN).
+    \item All matched keywords (highlighted in red).
+    \item Full transcription with matched keywords visually highlighted.
+    \item Translation of the transcription (if translation was enabled).
+\end{itemize}
+
+\subsection{SMTP Configuration}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Parameter} & \textbf{Value/Source} \\
+\hline
+SMTP Host & smtp.gmail.com \\
+\hline
+SMTP Port & 587 (STARTTLS) \\
+\hline
+Sender Email & Environment variable \texttt{ALERT\_SENDER\_EMAIL} \\
+\hline
+Sender Password & Environment variable \texttt{ALERT\_SENDER\_PASSWORD} \\
+\hline
+Recipient Email & Configurable constant \\
+\hline
+\end{tabular}
+\caption{SMTP Alert Configuration}
+\end{table}
+
+\noindent Credentials are read from environment variables rather than hardcoded in source code, following security best practices.
+
+\section{HTML Alert Formatting}
+
+To improve readability, the system generates visually enhanced HTML emails. The email design includes red warning banners, highlighted threat keywords, structured tables, clear transcription display, and an optional translation section. Threat words are highlighted using red background with white text, helping operators rapidly identify dangerous content without reading entire messages.
+
+The alert email is composed in both plain-text and HTML formats:
+\begin{itemize}
+    \item The plain-text part ensures delivery to clients that do not render HTML.
+    \item The HTML part uses inline CSS for a professional layout with a red alert header, a metadata table, highlighted keywords in red badges, and the transcription with matched keywords marked in a red-background highlight span.
+\end{itemize}
+
+\section{Right-to-Left Language Support}
+
+Right-to-left languages such as Arabic and Hebrew introduce formatting challenges during terminal display and alert rendering. To solve this issue, the system inserts Unicode Right-to-Left markers around detected keywords. This ensures correct visualization for Arabic threat words and improves multilingual usability and operator experience.
+
+\section{Full Pipeline Integration}
+
+The \texttt{AudioProcessingPipeline.run()} method orchestrates all audio modules in the following sequence:
+\begin{enumerate}
+    \item \textbf{Audio Capture:} Record fixed-duration or VAD-triggered audio.
+    \item \textbf{Speaker Recognition:} Identify the speaker using ECAPA-TDNN.
+    \item \textbf{Speech-to-Text:} Transcribe with Whisper large-v3 and extract \texttt{language\_probs}.
+    \item \textbf{Language Classification:} Apply the Whisper-first hierarchical classifier.
+    \item \textbf{Translation (optional):} Translate using MarianMT or Google Translate.
+    \item \textbf{Violence Keyword Scan:} Scan transcription with the detected language's keyword list.
+    \item \textbf{Alert Dispatch:} Send email if keywords found.
+    \item \textbf{Cleanup:} Delete temporary WAV file.
+\end{enumerate}
+
+\section{Command-Line Interface}
+The complete pipeline is accessible through a comprehensive CLI. Key options include:
+
+\begin{lstlisting}[language=bash]
+# Run full pipeline (record + transcribe + detect + alert)
+python pipeline.py
+
+# Transcribe an existing WAV file
+python pipeline.py --file audio.wav --translate en
+
+# Enroll a speaker
+python pipeline.py --enroll "Alice" alice1.wav alice2.wav
+
+# List enrolled speakers
+python pipeline.py --list-speakers
+
+# Use a specific Whisper model size
+python pipeline.py --whisper-model medium
+
+# Use Azure Speech backend
+python pipeline.py --backend azure --azure-key KEY --azure-region eastus
+
+# Disable speaker identification and violence check
+python pipeline.py --no-speaker-id --no-violence-check
+\end{lstlisting}
+
+\section{Example Pipeline Output}
+A typical pipeline execution produces output similar to the following:
+
+\begin{lstlisting}
+Recording for 5s ...
+Transcribing with Whisper large-v3 ...
+  Whisper language detection: ar (94.3% confidence)
+  Top-5: ar=94.3%  fa=2.1%  ur=1.2%  he=0.8%  en=0.6%
+
+Transcription: [Arabic RTL text]
+
+Language: Arabic (ar)  conf=98%  method=[whisper_primary]
+
+Speaker: Alice [accepted, cos=0.82]
+
+Translation (English): "I will kill the target tonight"
+
+THREAT DETECTED -- keywords: [kill, target]
+  Alert sent to security@example.com
+\end{lstlisting}
+
+\section{Mathematical Formulation Summary}
+
+\subsubsection{Keyword Union}
+\[
+K_{\text{final}} = K_{\text{English}} \cup K_{\text{Language}}
+\]
+
+\subsubsection{Threat Decision Function}
+\[
+\text{Threat} = \begin{cases} 1, & \text{Keyword} \in \text{Text} \\ 0, & \text{Otherwise} \end{cases}
+\]
+
+\subsubsection{Threat Probability}
+\[
+P(\text{Threat}) = \frac{N_{\text{matched}}}{N_{\text{keywords}}}
+\]
+where $N_{\text{matched}}$ represents detected keywords and $N_{\text{keywords}}$ represents total monitored keywords. Higher values indicate greater threat severity.
+
+\section{Limitations and Future Improvements}
+
+Despite strong performance, the proposed violence detection framework has several limitations. Keyword-based detection may occasionally generate false positives when violent words are used in harmless contexts (e.g., ``This movie contains violence.''). Sarcasm and contextual meaning also remain difficult to interpret.
+
+Future improvements may include:
+\begin{itemize}
+    \item \textbf{Context-Aware NLP:} Replace keyword matching with sentence-level intent classification using a fine-tuned multilingual transformer (mBERT or XLM-RoBERTa) to reduce false positives.
+    \item \textbf{Expanded Language Coverage:} Add keyword lists for additional languages as the system is deployed in new regions.
+    \item \textbf{Risk Scoring:} Assign graduated risk scores based on keyword severity, number of matches, and speaker identity to prioritize alerts.
+    \item \textbf{Audio-Visual Fusion:} Combine audio threat detection with video-based violence detection for higher confidence alerting.
+    \item \textbf{Streaming Mode:} Implement true real-time streaming transcription using Whisper's chunked processing API to reduce latency.
+    \item \textbf{Offline Alert Fallback:} Store undelivered alerts locally and retry when network connectivity is restored.
+\end{itemize}
+
+\section{Summary}
+
+This chapter presented the multilingual violence detection and alert subsystem. The proposed implementation introduced a language-aware threat detection mechanism capable of identifying dangerous speech across more than thirty languages. The subsystem dynamically selects violence-related keywords according to detected language and applies adaptive matching strategies for Latin and non-Latin scripts. Furthermore, an automated email alert mechanism was integrated to notify surveillance operators whenever suspicious speech is detected. The implemented framework transforms the surveillance system from passive monitoring into a proactive security intelligence solution capable of identifying verbal threats in real time, thereby improving safety and situational awareness in multilingual environments. This completes the three-chapter coverage of the audio processing pipeline.
+
+\newpage
+
+% ============================================================
+%  PART IV: DATABASE, ETHICS & CONCLUSION
+% ============================================================
+\part{Database, Ethics, and Conclusion}
+
+% ============================================================
+%  CHAPTER 11: DATABASE AND SCHEMA
+% ============================================================
+\chapter{Database and System Integration}
+\setcounter{section}{0}
+
+\section{Introduction}
+This chapter describes how the data produced by every subsystem---body identities, face attributes, natural-language descriptions, and audio events---is stored, searched, and integrated into a single operational picture. The low-level identity store was introduced in Chapter~6; here we take a system-wide view of the complete data model and the several complementary ways the database can be queried during an investigation.
+
+\section{The Unified Data Model}
+A single SQLite database is the durable source of truth for the entire system (Chapter~6). It maintains the following record structure per identity and its associated evidence:
+\begin{itemize}
+    \item A unique person identifier (UUID) assigned by body re-identification.
+    \item One or more \textbf{body embeddings} (512-dimensional OSNet vectors), each tagged with a canonical viewpoint---the gallery.
+    \item Zero or more \textbf{face embeddings} (512-dimensional InsightFace vectors) in a strictly isolated table (Chapter~8).
+    \item A history of \textbf{natural-language descriptions}, each with its 384-dimensional semantic-search vector, plus a pointer to the latest description (Chapter~7).
+    \item Soft-biometric \textbf{attributes}: age range, gender, ethnicity, and glasses (when the face layer is enabled).
+    \item An optional \textbf{watchlist name} and a ``returning'' flag.
+    \item First- and last-seen \textbf{timestamps and cameras}, and a per-camera appearance history.
+    \item Pending and resolved \textbf{merge proposals} between identities.
+\end{itemize}
+Crucially, the body and face embedding stores are kept separate even though both are 512-dimensional, because the identity machinery pools vectors by dimension; this isolation (Chapter~8) is what allows face evidence to enrich an identity without ever altering it.
+
+\section{Four Complementary Search Paths}
+The unified model supports four distinct ways of finding a person, each suited to a different investigative question:
+\begin{enumerate}
+    \item \textbf{Body re-identification (automatic, live):} cosine search over the FAISS-backed body gallery binds every new track to an existing identity or creates a new one (Chapter~6).
+    \item \textbf{Natural-language search:} a free-text query (``a man in a red shirt and white hat'') is embedded and matched semantically against stored descriptions (Chapter~7).
+    \item \textbf{Face-image search:} a query photograph is matched against the isolated face store to find a person by their face (Chapter~8).
+    \item \textbf{Attribute filtering:} structured filters---for example, male, age 20--30, wearing glasses, seen on camera~3---narrow the candidate set for review.
+\end{enumerate}
+These paths are complementary: appearance, description, face, and metadata each answer a different question, and an investigator can combine them.
+
+\section{Backward and Retrospective Identification}
+Because every identity accumulates embeddings, descriptions, attributes, and a camera timeline as it is observed, the database supports \emph{retrospective} investigation without storing raw video of every person. Given a reported incident, an operator can supply a body crop, a face photo, a natural-language description, or a set of known attributes, and the system returns a ranked candidate shortlist together with each candidate's last-known camera and time. This converts hours of manual footage review into a single query, while keeping a human in the loop for the final decision. Storage is feature-based: identities are represented by embeddings and text rather than by retained raw imagery, which also serves the privacy posture of Chapter~13.
+
+\section{System Integration}
+The complete system integrates three visual channels---body identity, face attributes, and natural-language description---with the audio pipeline of Part~III through the shared, timestamped database. Visual events (identity bindings, attribute estimates, violence scores) and audio events (transcriptions, language classifications, speaker identifications, keyword alerts) are written with timestamps, so an investigator can correlate audio and visual evidence from the same time window. A read-only ``command-center'' dashboard reads this database to present per-identity profiles, appearance descriptions and history, body and face embedding counts, camera timelines, attribute-distribution analytics, and a violence-alert feed---never modifying the underlying data, in keeping with the system's safety model.
+
+\section{Summary}
+This chapter took a system-wide view of the data model: a single SQLite source of truth holding body identities, an isolated face store, an accumulating description history with semantic vectors, soft-biometric attributes, and camera timelines, shadowed by the FAISS index for fast search. Four complementary search paths---body, text, face, and attribute---support both live operation and retrospective investigation, and a read-only dashboard integrates the visual and audio channels into one operational picture. The next chapter examines the ethical framework that governs all of this.
+
+\newpage
+
+% ============================================================
+%  CHAPTER 12: ETHICAL CONSIDERATIONS
+% ============================================================
+\chapter{Ethical Considerations}
+\setcounter{section}{0}
+
+\section{Introduction}
+The proposed system is designed to comply with ethical guidelines for responsible AI usage and does not violate ethical or legal principles when deployed correctly. Ethical considerations were integrated at both the design and implementation stages across all modules.
+
+\section{Purpose Limitation}
+The system is intended solely for security assistance, visitor analytics, and operational support within malls or public spaces. It is not designed for law enforcement, legal judgment, or autonomous decision-making. The scope of use is clearly defined to prevent mission creep into inappropriate applications.
+
+\section{Human-in-the-Loop Design}
+The system does not take actions independently. All outputs (identity matches, age range, gender, appearance-based attributes, transcriptions, keyword alerts) are advisory. Final decisions are always made by human security personnel through manual review. This design ensures that technology enhances rather than replaces human judgment.
+
+\section{Use of Soft Biometrics}
+Attributes such as age, gender, and ethnicity are treated as soft biometric features. These attributes are probabilistic estimates, not definitive facts. They are used only for filtering and narrowing down candidates, never for accusation or profiling. The system explicitly acknowledges the limitations of demographic estimation.
+
+\section{Privacy Preservation}
+Both body and face data are stored as numerical embeddings (512-dimensional vectors) rather than as raw imagery, and these embeddings cannot be reverse-engineered to reconstruct the original image. Face embeddings are additionally held in a store isolated from body identity, and the demographically sensitive ethnicity classifier is disabled by default. Audio data is processed transiently and not retained beyond the processing window unless a threat is detected, in which case only the transcription and metadata are stored. Data access is restricted to authorized personnel only.
+
+\section{Bias Awareness and Mitigation}
+The system acknowledges the presence of potential bias in demographic and behavioral models. Where such models are used, balanced and diverse datasets were prioritized during training to reduce bias, and the most sensitive of them---ethnicity estimation---is treated as optional and disabled by default. Just as importantly, these attributes form an additive layer that never drives identity: cross-camera re-identification is body-appearance-based, and demographic outputs are never used in isolation and are always cross-checked by humans.
+
+\subsection{Audio Bias}
+Speech recognition and language detection models may exhibit performance variation across accents, dialects, or languages. Mitigation strategies include using high-accuracy multilingual models (Whisper large-v3, ECAPA-TDNN), allowing future expansion to support additional languages and dialects, and avoiding decision-making based solely on automated outputs without human review.
+
+\subsection{Ethical Use in Security Applications}
+Future security-related features must follow strict ethical guidelines:
+\begin{itemize}
+    \item The system should flag potential risks, not label individuals.
+    \item Final decisions must remain under human supervision.
+    \item False positives must be handled carefully to prevent unnecessary alarm.
+    \item The goal is risk prevention, not mass surveillance.
+\end{itemize}
+
+\section{Legal Compliance}
+The system must be deployed in compliance with applicable data protection regulations (e.g., GDPR in Europe, PDPA in applicable jurisdictions). Operators are responsible for obtaining necessary permissions for audio and video monitoring in their deployment environment and for informing individuals that surveillance is in operation.
+
+\section{Ethical Compliance Summary}
+In summary, the system:
+\begin{itemize}
+    \item Does not perform surveillance for punishment or judgment.
+    \item Does not identify criminals autonomously.
+    \item Does not rely on demographic attributes alone for decision-making.
+    \item Operates as a decision-support tool with mandatory human oversight.
+    \item Stores biometric data in non-reversible embedding form.
+    \item Flags audio threats for human review rather than taking autonomous action.
+\end{itemize}
+
+\section{Summary}
+This chapter described the ethical framework governing the system's design and use. In the final chapter, we present the conclusion and future work.
+
+\newpage
+
+% ============================================================
+%  CHAPTER 13: CONCLUSION AND FUTURE WORK
+% ============================================================
+\chapter{Conclusion and Future Work}
+\setcounter{section}{0}
+
+\section{Introduction}
+This final chapter summarizes the achievements of the AI-Based Intelligent Surveillance System project, reflects on the lessons learned during development, and outlines the roadmap for future enhancements.
+
+\section{Summary of Accomplishments}
+This graduation project has successfully designed, built, and validated a complete multi-camera surveillance intelligence system. The system demonstrates the feasibility of combining multi-camera person re-identification, natural-language search, face-based demographic analysis, and audio processing into a single CPU-only platform that enhances security operations while maintaining ethical safeguards.
+
+Key technical achievements include:
+\begin{itemize}
+    \item \textbf{Multi-Camera Person Re-Identification:} an end-to-end body Re-ID pipeline (YOLOv8-seg, ByteTrack, OSNet/Market-1501) that tracks and re-identifies people across five synchronized cameras on CPU.
+    \item \textbf{Re-ID Embedding Upgrade:} OSNet x1.0 with Market-1501 weights produced cleanly separable same-person and different-person similarity distributions, replacing an overlapping ImageNet baseline.
+    \item \textbf{Context-Aware Matching:} a triple-threshold (same / overlap / cross-camera) live decision plus a mean-pool reconciliation worker with co-visibility boosting, eliminating gallery-sponge and identity-split failures.
+    \item \textbf{FAISS Search Acceleration:} an in-memory \texttt{IndexFlatIP} delivering a measured 916$\times$ speed-up over a linear scan, with zero accuracy loss and a transparent SQLite fallback.
+    \item \textbf{Natural-Language Description \& Search:} a non-reasoning vision-language describer (Qwen2.5-VL) and semantic search (all-MiniLM-L6-v2) enabling free-text person queries.
+    \item \textbf{Face \& Attributes Layer (additive, isolated):} InsightFace age/gender, ethnicity (82.56\%, ResNet-18), glasses (90\%, ResNet-50), watchlist and returning-face recognition, and face-image search.
+    \item \textbf{Additional Trained Attribute Models:} emotion (EfficientNet, 73\%), head-pose/occlusion (MobileNetV2), and facial-hair (ResNet-50) classifiers, trained and reserved for future integration.
+    \item \textbf{Video Violence Detection:} an isolated CNN-LSTM (ResNet-50 + BiLSTM) clip classifier with its own logging and alerting.
+    \item \textbf{Audio Pipeline:} Whisper large-v3 STT with Whisper-first hierarchical language classification across 99 languages.
+    \item \textbf{Speaker Recognition:} ECAPA-TDNN with augmented enrollment and per-speaker cosine thresholds.
+    \item \textbf{Multilingual Translation:} MarianMT (40+ language pairs) with Google Translate fallback.
+    \item \textbf{Violence Keyword Detection:} 30+ languages with language-aware regex/substring matching.
+    \item \textbf{Automated Alert System:} HTML email alerts via SMTP/STARTTLS with keyword highlighting.
+    \item \textbf{Ethical Framework:} human-in-the-loop design with privacy-preserving, isolated embedding storage.
+\end{itemize}
+
+\section{Lessons Learned}
+Throughout this project, the team developed technical expertise and valuable soft skills:
+\begin{itemize}
+    \item \textbf{The Embedding Is Everything:} the largest single accuracy jump came not from threshold tuning but from replacing a generic ImageNet backbone with a Re-ID-trained one (OSNet with Market-1501 weights). A poorly separated embedding space cannot be rescued by any downstream logic.
+    \item \textbf{Context Beats a Global Threshold:} no single similarity threshold can separate same-camera different-people from cross-camera same-person, because the score ranges genuinely overlap. Encoding camera topology into a triple-threshold decision was essential.
+    \item \textbf{Keep Fast and Slow Work Apart:} placing expensive description and reconciliation on background threads---never blocking the real-time tracking loop---was what made CPU-only real-time operation possible.
+    \item \textbf{Dataset Quality Matters:} Balanced, diverse datasets (FairFace, RWF-2000) significantly improve real-world generalization compared to skewed alternatives.
+    \item \textbf{Ensemble Approaches Win:} Both the language classifier (Whisper + text engines) and the speaker recognizer (augmented enrollment centroids) benefit from ensemble thinking.
+    \item \textbf{Acoustic Before Text:} Using Whisper's acoustic language detection before text-based engines resolved systematic French/Dutch confusion that plagued text-only approaches.
+    \item \textbf{Modular Design Pays Off:} Building each module independently with standardized interfaces enabled parallel development and straightforward integration.
+    \item \textbf{Ethics Must Be Built In:} Retrofitting ethical constraints is harder than designing for them from the start.
+\end{itemize}
+
+\section{Future Work}
+In the next development phase, future work will focus on:
+
+\subsection{Visual Modules}
+\begin{itemize}
+    \item \textbf{Spatio-temporal camera constraints:} add a camera transition-time matrix so that physically impossible cross-camera matches are rejected regardless of appearance similarity (the designed next step, Chapter~6).
+    \item \textbf{Integrating the reserved attribute models}---emotion, head-pose/occlusion, and facial-hair---behind the same additive, isolated design as the rest of the face layer.
+    \item \textbf{Higher-quality descriptions:} multi-snapshot consensus, a deterministic color sanity-check, re-description on appearance change, and hybrid photo-plus-text re-ranking.
+    \item \textbf{Aspect-ratio-preserving crops:} letterbox-pad rather than stretch crops before the Re-ID backbone, to avoid distorting body proportions.
+    \item Conducting bias audits and fairness assessments across all demographic modules.
+    \item Optimizing for edge deployment on resource-constrained devices.
+\end{itemize}
+
+\subsection{Audio Module}
+\begin{itemize}
+    \item Replacing keyword matching with context-aware multilingual NLP classifiers (mBERT, XLM-RoBERTa) to reduce false positives.
+    \item Implementing graduated risk scoring based on keyword severity and speaker identity.
+    \item Deploying true real-time streaming transcription using chunked Whisper processing.
+    \item Adding audio-visual fusion: correlating audio threat detections with simultaneous video violence detections for higher-confidence alerts.
+    \item Expanding language keyword coverage to additional ISO 639-1 languages.
+    \item Implementing offline alert queuing and automatic retry for network-degraded environments.
+\end{itemize}
+
+\subsection{System Integration}
+\begin{itemize}
+    \item Deploying the full system in a real-world simulated environment (e.g., a controlled mall setting) for comprehensive end-to-end testing.
+    \item Developing an analytics dashboard for business intelligence and security reporting.
+    \item Implementing multi-language support expansion for the user interface.
+\end{itemize}
+
+\section{Final Remarks}
+This work represents a practical application of artificial intelligence, computer vision, and natural language processing in real-world surveillance systems. The project demonstrates that modern deep learning approaches can provide valuable capabilities for public safety and business intelligence when implemented responsibly with appropriate ethical considerations.
+
+The modular architecture ensures that individual components can be improved and expanded over time, positioning the system for continued evolution. The vision of AI-enhanced public spaces is achievable through careful development, rigorous testing, and unwavering commitment to ethical principles.
+
+This graduation project provides a solid foundation for that vision while maintaining the human oversight necessary for responsible deployment. The balance between technological capability and ethical constraint defines the success of this system---ensuring that AI serves humanity while respecting fundamental rights and dignity.
+
+\newpage
+
+% ============================================================
+%  BIBLIOGRAPHY
+% ============================================================
+\chapter*{References}
+\addcontentsline{toc}{chapter}{References}
+
+\begin{enumerate}
+    \item G.~Jocher, A.~Chaurasia, and J.~Qiu, \textit{Ultralytics YOLOv8}, Ultralytics, 2023. [Online]. Available: \texttt{https://github.com/ultralytics/ultralytics}
+
+    \item Y.~Zhang \textit{et al.}, ``ByteTrack: Multi-Object Tracking by Associating Every Detection Box,'' in \textit{Proc. European Conference on Computer Vision (ECCV)}, 2022.
+
+    \item N.~Wojke, A.~Bewley, and D.~Paulus, ``Simple Online and Realtime Tracking with a Deep Association Metric (DeepSORT),'' in \textit{Proc. IEEE International Conference on Image Processing (ICIP)}, 2017.
+
+    \item K.~Zhou, Y.~Yang, A.~Cavallaro, and T.~Xiang, ``Omni-Scale Feature Learning for Person Re-Identification (OSNet),'' in \textit{Proc. IEEE/CVF International Conference on Computer Vision (ICCV)}, 2019.
+
+    \item K.~Zhou and T.~Xiang, ``Torchreid: A Library for Deep Learning Person Re-Identification in PyTorch,'' \textit{arXiv preprint arXiv:1910.10093}, 2019.
+
+    \item L.~Zheng, L.~Shen, L.~Tian, S.~Wang, J.~Wang, and Q.~Tian, ``Scalable Person Re-identification: A Benchmark (Market-1501),'' in \textit{Proc. IEEE International Conference on Computer Vision (ICCV)}, 2015.
+
+    \item J.~Johnson, M.~Douze, and H.~J\'egou, ``Billion-scale Similarity Search with GPUs (FAISS),'' \textit{IEEE Transactions on Big Data}, vol.~7, no.~3, pp.~535--547, 2021.
+
+    \item K.~He, X.~Zhang, S.~Ren, and J.~Sun, ``Deep Residual Learning for Image Recognition (ResNet),'' in \textit{Proc. IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, 2016.
+
+    \item M.~Sandler, A.~Howard, M.~Zhu, A.~Zhmoginov, and L.-C.~Chen, ``MobileNetV2: Inverted Residuals and Linear Bottlenecks,'' in \textit{Proc. IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, 2018.
+
+    \item M.~Tan and Q.~Le, ``EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks,'' in \textit{Proc. International Conference on Machine Learning (ICML)}, 2019.
+
+    \item K.~Zuiderveld, ``Contrast Limited Adaptive Histogram Equalization (CLAHE),'' in \textit{Graphics Gems IV}, Academic Press, 1994, pp.~474--485.
+
+    \item J.~Deng, J.~Guo, N.~Xue, and S.~Zafeiriou, ``ArcFace: Additive Angular Margin Loss for Deep Face Recognition,'' in \textit{Proc. IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, 2019. (InsightFace.)
+
+    \item K.~K\"arkk\"ainen and J.~Joo, ``FairFace: Face Attribute Dataset for Balanced Race, Gender, and Age,'' in \textit{Proc. IEEE Winter Conference on Applications of Computer Vision (WACV)}, 2021.
+
+    \item M.~Cheng, K.~Cai, and M.~Li, ``RWF-2000: An Open Large Scale Video Database for Violence Detection,'' in \textit{Proc. International Conference on Pattern Recognition (ICPR)}, 2020.
+
+    \item Qwen Team, ``Qwen2.5-VL Technical Report,'' \textit{arXiv preprint arXiv:2502.13923}, 2025.
+
+    \item N.~Reimers and I.~Gurevych, ``Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks,'' in \textit{Proc. Conference on Empirical Methods in Natural Language Processing (EMNLP)}, 2019. (\texttt{all-MiniLM-L6-v2}.)
+
+    \item A.~Radford, J.~W.~Kim, T.~Xu, G.~Brockman, C.~McLeavey, and I.~Sutskever, ``Robust Speech Recognition via Large-Scale Weak Supervision (Whisper),'' \textit{arXiv preprint arXiv:2212.04356}, 2022.
+
+    \item B.~Desplanques, J.~Thienpondt, and K.~Demuynck, ``ECAPA-TDNN: Emphasized Channel Attention, Propagation and Aggregation in TDNN Based Speaker Verification,'' in \textit{Proc. Interspeech}, 2020.
+
+    \item M.~Ravanelli \textit{et al.}, ``SpeechBrain: A General-Purpose Speech Toolkit,'' \textit{arXiv preprint arXiv:2106.04624}, 2021.
+
+    \item A.~Nagrani, J.~S.~Chung, and A.~Zisserman, ``VoxCeleb: A Large-Scale Speaker Identification Dataset,'' in \textit{Proc. Interspeech}, 2017.
+
+    \item M.~Junczys-Dowmunt \textit{et al.}, ``Marian: Fast Neural Machine Translation in C++ (MarianMT),'' in \textit{Proc. Annual Meeting of the Association for Computational Linguistics (ACL), System Demonstrations}, 2018.
+
+    \item P.~Marroqu\'in, J.~Dubois, and C.~Nicolle, ``WiseNET: An Indoor Multi-Camera Multi-Space Dataset with Contextual Information and Annotations for People Detection and Tracking,'' \textit{Data in Brief}, vol.~27, 2019.
+
+    \item D.~R.~Hipp, \textit{SQLite}, SQLite Consortium. [Online]. Available: \texttt{https://www.sqlite.org}
+
+    \item Ollama, \textit{Ollama: Run Large Language Models Locally}. [Online]. Available: \texttt{https://ollama.com}
+
+\end{enumerate}
+
+\end{document}

@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-900 text-emerald-50;
+  margin: 0;
+  background:
+    radial-gradient(900px 480px at 82% -12%, rgba(16, 185, 129, 0.1), transparent),
+    radial-gradient(720px 480px at -12% 112%, rgba(16, 185, 129, 0.06), transparent),
+    #04070a;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* thin emerald scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1f3b31 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #1f3b31;
+  border-radius: 8px;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-line bg-ink-700/70 backdrop-blur-sm;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium
+           transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-emerald text-ink-900 hover:bg-emerald-glow;
+  }
+  .btn-ghost {
+    @apply btn border border-line text-emerald-100 hover:bg-ink-600;
+  }
+  .btn-danger {
+    @apply btn border border-red-500/40 text-red-300 hover:bg-red-500/10;
+  }
+  .input {
+    @apply w-full rounded-lg border border-line bg-ink-800 px-3 py-2 text-sm text-emerald-50
+           placeholder:text-emerald-200/30 focus:border-emerald focus:outline-none;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-line bg-ink-600 px-2 py-0.5
+           text-xs text-emerald-100;
+  }
+}

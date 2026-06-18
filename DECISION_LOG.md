@@ -36,8 +36,81 @@
 | Part 10 (Phase 4A+4B) | LLM Body Description + Natural-Language Search | ✅ Complete |
 | Part 10 (Phase 4C/4D) | Multi-snapshot consensus, color sanity-check, re-description triggers, hybrid photo+text rerank | 🔲 Deferred |
 | Part 11 | Face & Violence integration (InsightFace + glasses + ethnicity + CNN-LSTM violence) merged from team branch — ADDITIVE | ✅ Code complete (awaiting team `.pth` weights) |
+| Track A | Live-Cams Overlay Recorder (server-side burned-in detection boxes) | ✅ Complete |
+| Track B | Conversational Assistant (tiered brain, multi-turn memory, read+write) | ✅ Complete |
 
 ---
+
+## Track B — Conversational Assistant — 2026-06-18
+
+### TB-A: Chatbot tool layer (`webapp/api/chatbot/tools.py`)
+**What:** Thin wrapper module exposing the engine's DB + services as named "tools": `extract_filters`, `search`, `get_person`, `stats`, `alerts`, `resolve_person_id`. Filter extraction combines the engine's own `QueryParser._rule_based_fallback()` (Tier-1, instant, offline) with extra chat-specific patterns for age buckets (`"9 years old"` → `"7-10"`), child/teen/young/elderly word sets, camera number, ethnicity, status, and `named X`.
+**Why:** Centralising filter logic here means the chatbot reuses the exact same age-bucket table, status words, and appearance keys the REST search routes use. No parallel logic that can drift.
+**Result:** ✅ All read tools validated; `extract_filters("find a child about 9 wearing a red t-shirt")` correctly produces `face.age_range=["0-3","4-6","7-10"]` + appearance clothing colour.
+
+### TB-B: Shared corrections service (`webapp/api/corrections_service.py`)
+**What:** Extracted `merge`, `delete_person`, `edit_attributes`, `redescribe`, `split`, `run_descriptions` from `routers/corrections.py` into a standalone module. Both the REST router and the chatbot call these functions. Each goes through the engine's invariant-safe `Database` methods + `audit_log` + `engine.invalidate_search_caches`.
+**Why (invariant compliance):** The chatbot's write actions must go through the same audit trail and FAISS cache-invalidation path as the REST corrections endpoint. Sharing one code path makes this automatic — no risk of the chatbot bypassing audit or leaving a stale FAISS index.
+**Old approach:** All correction logic was inlined in `corrections.py`. Chatbot would have needed its own parallel copy.
+**New approach:** `corrections_service.py` (pure functions on `TenantCtx`); `corrections.py` routes delegate to it.
+**Result:** ✅ REST routes unchanged (regression-safe); chatbot confirmed to use same path.
+
+### TB-C: Tiered NLU brain (`webapp/api/chatbot/brain.py`)
+**What:** Two-tier intent router. **Tier 1** (default, instant, offline): regex intent classifier (greeting / help / thanks / stats / alerts / write-detection / lookup / search/refine / unknown) + `tools.extract_filters` for structured filter extraction. **Tier 2** (optional, Ollama): single `qwen2.5vl:3b` JSON call for messages Tier 1 can't classify; times out → falls back to Tier-1 clarification.
+**Design decisions:**
+- **Greeting has no DB side-effect** — replies immediately with no search (verified: "hi" → reply, no results).
+- **Write actions are PROPOSED, never executed by the brain** — returns `proposed_action` + `pending_action` dict; execution only on a follow-up affirmative turn after a role check.
+- **Refinement detection**: if `active_filters` is non-empty and the message starts with `only/just/also/and/make it/on camera/…` (or has filters but no explicit search verb), the filters are MERGED into the running state rather than replaced.
+- **Reference resolution**: `_resolve_one`/`_resolve_two` understand ordinals (`"first"`, `"second"`), explicit IDs (`"P:3601b2"`), and pronoun-like references (`"them"`/`"both"` for the last results list).
+**Why tiered:** Tier-1 handles greetings, searches, and stats with zero latency and zero Ollama dependency — safe on CPU-only setups where Ollama may be slow or down. Tier-2 only fires for genuinely ambiguous phrasing, with a hard 25 s timeout.
+**Result:** ✅ All intent paths verified via smoke tests and regression.
+
+### TB-D: Conversation memory store (`webapp/api/chatbot/store.py`)
+**What:** SQLite-backed session store in `AUTH_DB_PATH` (the webapp's own `auth.db`, never the engine DB). Two tables: `chat_sessions` (per session: `active_filters`, `last_results`, `pending_action`) and `chat_messages` (full transcript). In-memory ephemeral by default; SQLite ensures restart-survival.
+**Invariant:** Chat data is stored in the AUTH db (not the engine's `surveillant.db`) so identity data is never polluted by conversation metadata. This mirrors the audit_log and user tables that already live in `auth.db`.
+**Result:** ✅ Session persistence verified — history survives across three round-trips; 6-message history confirmed by `GET /chat/sessions/{id}/messages`.
+
+### TB-E: Write-action confirmation guard (`webapp/api/chatbot/router.py`)
+**What:** Any write action proposed by the brain (`pending_action` in session) is only executed when the user's NEXT message passes `brain.is_affirmative()` AND the caller's role is in `{admin, operator}`. A negative turn clears the pending action without executing. The brain never executes writes directly.
+**Why:** Write via chat is powerful; the confirm step + role gate + audit log are the safety guardrails. A viewer-role user gets a clear "requires admin or operator role" message instead of an error.
+**Result:** ✅ Router implemented; role gate enforced on execution path.
+
+### TB-F: Chat endpoint (`POST /chat`, `GET /chat/sessions/{id}/messages`)
+**What:** Two endpoints mounted at `/chat` in `main.py`. `POST /chat` accepts `{session_id?, message}`, routes through the brain, persists state, executes confirmed writes. `GET /chat/sessions/{id}/messages` returns the transcript for page reloads.
+**Result:** ✅ Endpoints smoke-tested end-to-end (greeting, search, stats, write-propose, history).
+
+### TB-G: Assistant frontend page (`webapp/web/src/pages/Assistant.tsx`)
+**What:** New React page at `/assistant`. Features: bot/user message bubbles with markdown-lite rendering (bold, bullet lists); loading spinner while waiting; inline `PersonCard` grid when results are returned; amber action-proposal bar with Confirm/Cancel buttons when a `proposed_action` is present; auto-open `PersonDrawer` when the brain resolves a lookup; suggestion chips on the empty state; "New chat" button to clear session; session persistence via `sessionStorage`.
+**Design:** Uses the existing `PersonCard`, `PersonDrawer`, `useAuth` and design tokens (ink-700/800, emerald, etc.) — no new design-system tokens introduced.
+**Result:** ✅ TypeScript compiles clean (0 errors after two minor JSX fixes: escaped curly-quote in placeholder, named vs default PersonDrawer import). Sidebar nav entry added; route registered in App.tsx.
+
+---
+
+## Track A — Live-Cams Overlay Recorder — 2026-06-18
+
+### TA-A: Offline recorder script (`webapp/api/tools/record_overlays.py`)
+**What:** One-time offline script that runs the existing `PersonDetector` + `PersonTracker` + `PersonSearcher` over every demo camera video in sequence, and for each frame emits a JSON sidecar (`webapp/api/data/demo/overlays/cam{i}.json`) keyed by frame index. Each frame entry contains `[{bbox, track_id, person_id, state, status, gallery_size, name, gender, age_range}]`. Track→person_id mapping is cached once per track (searched against the seeded gallery).
+**Why sidecar, not engine DB tables:** Invariant #4 — never mutate the engine's SQLite schema. Overlay metadata is an artifact of the webapp's presentation layer, not a core identity signal. JSON sidecar in a webapp-owned directory respects the boundary.
+**Sync guarantee:** The recorder reads frames `0..N` in order; the MJPEG endpoint reads in order too and uses `frame_idx % total_frames` for the modulo — boxes line up exactly with playback.
+**Fallback labelling:** Tracks with no confident gallery match (sim < threshold) are labelled `T{track_id}` (shown in collecting/unverified style), not dropped.
+**Result:** ✅ All 5 cameras recorded. Cams 0–2 have moderate traffic; cams 3–4 heavy (517 kB / 568 kB sidecars). Verified: 2 of 3 tracks on cam0 resolved to real `person_id`s from the demo DB.
+
+### TA-B: Shared draw helper (`surveillant/display/overlay_draw.py`)
+**What:** Factored the per-track box-drawing logic (lines ~207–297 of `visualizer.py`) into a standalone `draw_tracks(frame, tracks, cam_id, color_registry) → np.ndarray`. `GridDisplay.update()` now calls this function (no behavior change for the desktop app). The MJPEG endpoint also calls the same function — single source of truth for box style, label format, state colors, and Part-11 attribute bits.
+**Why:** Ensures the webapp's live view renders EXACTLY the same box style as the desktop display. Any future style change (label format, color scheme, border) needs to be made in one place.
+**Result:** ✅ Visually verified — rendered an overlay frame (cam0 frame 277) with red box + `P:3601b2 [*][G:1] | Male | 20-30 | Mi…` label; style matches the desktop display.
+
+### TA-C: Overlay-aware MJPEG endpoint (`webapp/api/routers/cameras.py` + `webapp/api/overlays.py`)
+**What:** New `webapp/api/overlays.py` loads and memo-caches each camera's sidecar. Modified `_mjpeg(...)`: after `cap.read()`, checks `?overlay=1` query param; if set, looks up `frames[str(idx % total)]` from the sidecar and calls `draw_tracks()` before JPEG encode. Process-wide singleton `ColorRegistry` ensures stable colors across cameras. Default `overlay=False` keeps current behavior when the toggle is off.
+**Result:** ✅ Backend serving overlays; sidecar cache working.
+
+### TA-D: Frontend overlay toggle (`webapp/web/src/pages/LiveCams.tsx`)
+**What:** Added an "Overlays" toggle (default on) to the Live Cameras page. `streamUrl(cam_id, overlay)` appends `&overlay=1` when on. Replaced the "placeholder mode" banner with a short legend (🔲 Collecting, 🟩 Identified, ⬛ Returning). Box style matches the desktop display (deterministic colors from `ColorRegistry`).
+**Result:** ✅ Toggle live; overlay URLs confirmed correct.
+
+---
+
+
 
 ## Part 11 — Face & Violence Integration (merged from team branch) — 2026-06-16
 
@@ -804,4 +877,37 @@ All checks pass on an in-memory database:
 
 ---
 
-*Last updated: 2026-05-28 — Parts 1–8.5 + Part 10 (Phase 4A+4B LLM description & NL search) complete. Part 9 (spatio-temporal) and Part 10 (Phase 4C/4D extras) deferred.*
+---
+
+## Web Interface (2026-06-18) — `webapp/` FastAPI + React dashboard (Phase 2 slice)
+
+A web layer was added under `webapp/` (separate from the engine): a FastAPI API
+that imports the engine and a React dashboard. The API serves a SEEDED COPY of
+the DB (`webapp/api/seed_demo.py` copies `database/surveillant.db` + the
+referenced snapshot folders into `webapp/api/data/demo/`) so a fresh engine run —
+which wipes `surveillant.db` — can never destroy what the site serves.
+
+**Engine change — `modules/storage/database.py` gained 4 methods** (for the
+dashboard's correction tools; all reads/writes still go through Database, never
+raw SQL from the web layer):
+- `delete_person(person_id)` — single-transaction purge of the person across
+  `person_embeddings`, `face_embeddings`, `camera_history`, `person_descriptions`,
+  `description_queue` (+ resolves pending `merge_proposals`, deletes the `persons` row).
+- `split_person(person_id, embedding_ids, history_ids=None, new_person_id=None)` —
+  peels selected gallery embeddings / camera-history rows into a NEW person_id
+  (fix for "two people fused into one"); recomputes `gallery_size` + `known_angles`
+  on both sides.
+- `get_gallery_entries_meta(person_id)` / `get_camera_history_rows(person_id)` —
+  expose primary-key ids (NO vectors) so the split UI can pick which rows to move.
+
+**Invariant note:** `delete_person` / `split_person` deliberately do NOT fire the
+`on_embedding_added` / `on_merge` cache hooks. Identity-mutating web corrections
+rebuild FAISS from SQLite afterward (the web API calls
+`engine.invalidate_search_caches`), consistent with invariant #4 (SQLite is the
+source of truth). Existing `merge_persons` is reused as-is for the merge tool.
+
+The engine's live pipeline (`main.py`, searcher, reconciliation) is unchanged.
+
+---
+
+*Last updated: 2026-06-18 — Web interface Phase 2 (API + dashboard skeleton) added under `webapp/`; `database.py` gained delete_person / split_person / get_gallery_entries_meta / get_camera_history_rows for the correction tools. Engine live pipeline unchanged. (Earlier: Parts 1–8.5 + Part 10 Phase 4A+4B complete; Part 9 + Phase 4C/4D deferred.)*
