@@ -37,7 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     localStorage.removeItem(TOKEN_KEY);
     setUser(null);
-    location.href = "/login";
+    location.href = "/";
   };
 
   return <Ctx.Provider value={{ user, loading, login, logout }}>{children}</Ctx.Provider>;

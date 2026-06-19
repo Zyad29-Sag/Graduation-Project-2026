@@ -12,12 +12,12 @@ import {
 import { useAuth } from "../auth/AuthContext";
 
 const NAV = [
-  { to: "/", label: "Overview", icon: LayoutDashboard },
-  { to: "/cameras", label: "Live Cams", icon: Video },
-  { to: "/people", label: "People", icon: Users },
-  { to: "/search", label: "Search", icon: Search },
-  { to: "/assistant", label: "Assistant", icon: MessageCircle },
-  { to: "/alerts", label: "Alerts", icon: ShieldAlert },
+  { to: "/app", label: "Overview", icon: LayoutDashboard },
+  { to: "/app/cameras", label: "Live Cams", icon: Video },
+  { to: "/app/people", label: "People", icon: Users },
+  { to: "/app/search", label: "Search", icon: Search },
+  { to: "/app/assistant", label: "Assistant", icon: MessageCircle },
+  { to: "/app/alerts", label: "Alerts", icon: ShieldAlert },
 ];
 
 export default function Layout() {
@@ -34,7 +34,7 @@ export default function Layout() {
             <NavLink
               key={to}
               to={to}
-              end={to === "/"}
+              end={to === "/app"}
               className={({ isActive }) =>
                 `flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
                   isActive

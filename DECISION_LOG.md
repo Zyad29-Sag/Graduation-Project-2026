@@ -38,6 +38,38 @@
 | Part 11 | Face & Violence integration (InsightFace + glasses + ethnicity + CNN-LSTM violence) merged from team branch — ADDITIVE | ✅ Code complete (awaiting team `.pth` weights) |
 | Track A | Live-Cams Overlay Recorder (server-side burned-in detection boxes) | ✅ Complete |
 | Track B | Conversational Assistant (tiered brain, multi-turn memory, read+write) | ✅ Complete |
+| Track C | Public marketing / academic-showcase site (no-login landing pages) | ✅ Complete |
+
+---
+
+## Track C — Public Marketing / Academic-Showcase Site — 2026-06-18
+
+> A public, **no-login** front for the website that presents the project's idea,
+> capabilities and modules to visitors (professors / general audience). The
+> authenticated dashboard is unchanged — only *remounted* under `/app`.
+
+### TC-A: Routing split (public site at `/`, console at `/app`)
+**What:** `App.tsx` now serves a public `SiteLayout` at `/`, `/modules`,
+`/architecture`, `/ethics`, `/team`; the existing console moved from `/`, `/cameras`…
+to `/app`, `/app/cameras`…. Only mechanical path edits to the console plumbing:
+`Layout.tsx` nav hrefs, `Login.tsx` post-login redirect (`/`→`/app`),
+`AuthContext.logout` (→ `/`). **No dashboard design/behavior change.**
+**Why:** Standard product structure — visitors land on the marketing site; signing
+in opens the console.
+
+### TC-B: Emerald-Sentinel design system, fully isolated
+**What:** New `src/site/` module (`SiteLayout`, `Home`, `Modules`, `Architecture`,
+`Ethics`, `Team`, shared `ui.tsx`) styled by a **scoped** `site.css` — every class is
+prefixed `site-*` and the whole tree is wrapped in `.site-shell`, so it cannot affect
+the dashboard's `index.css` tokens. Fonts (Geist + JetBrains Mono) load via `<link>`
+in `index.html` (unused by the dashboard, so harmless). Theme matches the Stitch
+"Emerald Sentinel" designs: deep-charcoal dot-grid base, emerald/cyan neon accents,
+glassmorphism cards, mono bracketed labels, targeting reticles, scanlines.
+**Content:** Drawn from real project facts (OSNet/ByteTrack/FAISS Re-ID, InsightFace,
+CNN-LSTM violence, Qwen2.5-VL description + MiniLM semantic search). Modules page marks
+each of the 10 modules **live vs planned** honestly. Team page uses editable placeholders.
+**Verified:** all 5 public pages render (computed styles confirm Geist/charcoal/glass/
+emerald), `/app` correctly redirects to `/login` when unauthenticated, 0 console/server errors.
 
 ---
 
